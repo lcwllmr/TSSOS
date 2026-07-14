@@ -11,6 +11,7 @@ mutable struct cpop_data
     ipart # include the imaginary part
     ConjugateBasis # include conjugate variables in monomial bases
     normality # normal order
+    joint_normality # jointly normal order
     basis # monomial bases
     ebasis # monomial bases for equality constraints
     ksupp # extended support at the k-th TS step
@@ -36,7 +37,7 @@ end
 """
     opt,sol,data = complex_cs_tssos(pop, z, d; nb=0, numeq=0, CS="MF", cliques=[], TS="block", eqTS=TS, reducebasis=false, 
     merge=false, md=3, QUIET=false, solve=true, solution=false, dualize=false, Gram=false, MomentOne=false, ConjugateBasis=false, 
-    normality=!ConjugateBasis, mosek_setting=mosek_para(), model=nothing, rtol=1e-2, gtol=1e-2, ftol=1e-3)
+    normality=!ConjugateBasis, joint_normality=0, mosek_setting=mosek_para(), model=nothing, rtol=1e-2, gtol=1e-2, ftol=1e-3)
 
 Compute the first TS step of the CS-TSSOS hierarchy for constrained complex polynomial optimization. 
 If `ConjugateBasis=true`, then include conjugate variables in monomial bases.
@@ -57,6 +58,7 @@ If `MomentOne=true`, add an extra first-order moment PSD constraint to the momen
 - `eqTS`: type of term sparsity for equality constraints (by default the same as `TS`, `false`)
 - `md`: tunable parameter for merging blocks
 - `normality`: normal order
+- `joint_normality`: jointly normal order
 - `QUIET`: run in the quiet mode (`true`, `false`)
 - `rtol`: tolerance for rank
 - `gtol`: tolerance for global optimality gap
@@ -70,20 +72,20 @@ If `MomentOne=true`, add an extra first-order moment PSD constraint to the momen
 function complex_cs_tssos(pop::Vector{Poly{T}}, z, d; numeq=0, RemSig=false, nb=0, CS="MF", cliques=[], TS="block", eqTS=TS, 
     merge=false, md=3, reducebasis=false, QUIET=false, solve=true, solution=false, dualize=false, MomentOne=false, 
     ConjugateBasis=false, Gram=false, mosek_setting=mosek_para(), model=nothing, writetofile=false, normality=!ConjugateBasis, 
-    rtol=1e-2, gtol=1e-2, ftol=1e-3) where {T<:Number}
+    joint_normality=0, rtol=1e-2, gtol=1e-2, ftol=1e-3) where {T<:Number}
     npop = [cpoly(p, z) for p in pop]
     return complex_cs_tssos(npop, length(z), d, numeq=numeq, RemSig=RemSig, nb=nb, CS=CS, cliques=cliques, TS=TS, eqTS=eqTS, merge=merge, 
     md=md, reducebasis=reducebasis, QUIET=QUIET, solve=solve, dualize=dualize, solution=solution, MomentOne=MomentOne, ConjugateBasis=ConjugateBasis, 
-    Gram=Gram, mosek_setting=mosek_setting, model=model, writetofile=writetofile, normality=normality, pop=pop, z=z, rtol=rtol, gtol=gtol, ftol=ftol)
+    Gram=Gram, mosek_setting=mosek_setting, model=model, writetofile=writetofile, normality=normality, joint_normality=joint_normality, pop=pop, z=z, rtol=rtol, gtol=gtol, ftol=ftol)
 end
 
 function complex_tssos(pop::Vector{Poly{T}}, z, d; numeq=0, RemSig=false, nb=0, TS="block", eqTS=TS, 
     merge=false, md=3, reducebasis=false, QUIET=false, solve=true, solution=false, dualize=false, MomentOne=false, 
     ConjugateBasis=false, Gram=false, mosek_setting=mosek_para(), model=nothing, writetofile=false, normality=!ConjugateBasis, 
-    rtol=1e-2, gtol=1e-2, ftol=1e-3) where {T<:Number}
+    joint_normality=0, rtol=1e-2, gtol=1e-2, ftol=1e-3) where {T<:Number}
     return complex_cs_tssos(pop, z, d, numeq=numeq, RemSig=RemSig, nb=nb, CS=false, TS=TS, eqTS=eqTS, merge=merge, md=md, reducebasis=reducebasis, 
     QUIET=QUIET, solve=solve, dualize=dualize, solution=solution, MomentOne=MomentOne, ConjugateBasis=ConjugateBasis, Gram=Gram, mosek_setting=mosek_setting, 
-    model=model, writetofile=writetofile, normality=normality, rtol=rtol, gtol=gtol, ftol=ftol)
+    model=model, writetofile=writetofile, normality=normality, joint_normality=joint_normality, rtol=rtol, gtol=gtol, ftol=ftol)
 end
 
 """
@@ -95,7 +97,7 @@ Compute the first TS step of the CS-TSSOS hierarchy for constrained complex poly
 """
 function complex_cs_tssos(npop::Vector{cpoly{T}}, n::Int, d; numeq=0, RemSig=false, nb=0, CS="MF", cliques=[], 
     TS="block", eqTS=TS, merge=false, md=3, reducebasis=false, QUIET=false, solve=true, solution=false, dualize=false, MomentOne=false, ConjugateBasis=false, 
-    Gram=false, mosek_setting=mosek_para(), model=nothing, writetofile=false, normality=!ConjugateBasis, pop=nothing, z=nothing, 
+    Gram=false, mosek_setting=mosek_para(), model=nothing, writetofile=false, normality=!ConjugateBasis, joint_normality=0, pop=nothing, z=nothing, 
     rtol=1e-2, gtol=1e-2, ftol=1e-3) where {T<:Number}
     println("*********************************** TSSOS ***********************************")
     println("TSSOS is launching...")
@@ -130,8 +132,11 @@ function complex_cs_tssos(npop::Vector{cpoly{T}}, n::Int, d; numeq=0, RemSig=fal
     end
     time = @elapsed begin
     ebasis = Vector{Vector{Vector{Tuple{Vector{UInt16},Vector{UInt16}}}}}(undef, cql)
+    if joint_normality > 0
+        normality = 0
+    end
     if ConjugateBasis == false
-        if normality == 0
+        if normality == 0 && joint_normality == 0
             basis = Vector{Vector{Vector{Vector{UInt16}}}}(undef, cql)
         else
             basis = Vector{Vector{Vector{Union{Vector{UInt16}, Tuple{Vector{UInt16},Vector{UInt16}}}}}}(undef, cql)
@@ -142,23 +147,52 @@ function complex_cs_tssos(npop::Vector{cpoly{T}}, n::Int, d; numeq=0, RemSig=fal
     @threads for i = 1:cql
         ebasis[i] = Vector{Vector{Tuple{Vector{UInt16},Vector{UInt16}}}}(undef, length(J[i]))
         if ConjugateBasis == false
-            if normality == 0
+            if normality == 0 && joint_normality == 0
                 basis[i] = [get_basis(cliques[i], rlorder[i]-maxcdeg(ineq_cons[j])) for j in I[i]]
             else
-                basis[i] = Vector{Vector{Union{Vector{UInt16}, Tuple{Vector{UInt16},Vector{UInt16}}}}}(undef, length(I[i])+cliquesize[i])
+                if normality > 0
+                    basis[i] = Vector{Vector{Union{Vector{UInt16}, Tuple{Vector{UInt16},Vector{UInt16}}}}}(undef, length(I[i])+cliquesize[i])
+                else
+                    basis[i] = Vector{Vector{Union{Vector{UInt16}, Tuple{Vector{UInt16},Vector{UInt16}}}}}(undef, length(I[i])+1)
+                end
                 basis[i][1] = get_basis(cliques[i], rlorder[i])
-                temp = get_basis(cliques[i], Int(normality))
+                if normality > 0
+                    temp = get_basis(cliques[i], Int(normality))
+                else
+                    temp = get_basis(cliques[i], joint_normality)
+                    basis[i][2] = [tuple(item, UInt16[]) for item in temp]
+                end
                 for s = 1:cliquesize[i]
-                    basis[i][s+1] = [[tuple(item, UInt16[]) for item in temp]; [tuple(item, UInt16[cliques[i][s]]) for item in temp]]
-                    if nb > 0
-                        basis[i][s+1] = reduce_unitnorm.(basis[i][s+1], nb)
-                        unique!(basis[i][s+1])
+                    if normality > 0
+                        basis[i][s+1] = [[tuple(item, UInt16[]) for item in temp]; [tuple(item, UInt16[cliques[i][s]]) for item in temp]]
+                        if nb > 0
+                            basis[i][s+1] = reduce_unitnorm.(basis[i][s+1], nb)
+                            unique!(basis[i][s+1])
+                        end
+                    else
+                        append!(basis[i][2], [tuple(item, UInt16[cliques[i][s]]) for item in temp])
                     end
                 end
-                for s = 1:length(I[i])-1
-                    basis[i][s+1+cliquesize[i]] = get_basis(cliques[i], rlorder[i]-maxcdeg(ineq_cons[I[i][s+1]]))
+                if joint_normality > 0 && nb > 0
+                    basis[i][2] = reduce_unitnorm.(basis[i][2], nb)
+                    unique!(basis[i][2])
                 end
-                I[i] = [ones(Int, cliquesize[i]); I[i]]
+                if normality > 0
+                    for s = 1:length(I[i])-1
+                        basis[i][s+1+cliquesize[i]] = get_basis(cliques[i], rlorder[i]-maxcdeg(ineq_cons[I[i][s+1]]))
+                    end
+                    I[i] = [ones(Int, cliquesize[i]); I[i]]
+                else
+                    for s = 1:length(I[i])-1
+                        temp0 = get_basis(cliques[i], rlorder[i]-maxcdeg(ineq_cons[I[i][s+1]]))      
+                        basis[i][s+2] = [tuple(item, UInt16[]) for item in temp0]
+                        # temp = get_basis(cliques[i], joint_normality-maxcdeg(ineq_cons[I[i][s+1]]))
+                        # for t = 1:cliquesize[i]
+                        #     append!(basis[i][s+2], [tuple(item, UInt16[cliques[i][t]]) for item in temp])
+                        # end
+                    end
+                    I[i] = [1; I[i]]
+                end
             end
             for s = 1:length(J[i])
                 if rlorder[i] < maxcdeg(eq_cons[J[i][s]])
@@ -222,7 +256,8 @@ function complex_cs_tssos(npop::Vector{cpoly{T}}, n::Int, d; numeq=0, RemSig=fal
         blocks,cl,blocksize,eblocks = get_blocks(I, J, ineq_cons, eq_cons, cliques, cql, tsupp, basis, ebasis, TS=TS, eqTS=eqTS, merge=merge, md=md, nb=nb)
     end
     if reducebasis == true
-        tsupp = get_csupp(rlorder, basis, ebasis, ineq_cons, eq_cons, I, J, Iprime, Jprime, blocks, eblocks, cl, blocksize, cql, cliquesize, norm=true, nb=nb, ConjugateBasis=ConjugateBasis, normality=normality)
+        tsupp = get_csupp(rlorder, basis, ebasis, ineq_cons, eq_cons, I, J, Iprime, Jprime, blocks, eblocks, cl, blocksize, cql, cliquesize, norm=true, nb=nb, 
+        ConjugateBasis=ConjugateBasis, normality=normality, joint_normality=joint_normality)
         foreach(item -> item[1] == item[2] ? push!(tsupp, item[1]) : nothing, obj.supp)
         sort!(tsupp)
         unique!(tsupp)
@@ -248,7 +283,7 @@ function complex_cs_tssos(npop::Vector{cpoly{T}}, n::Int, d; numeq=0, RemSig=fal
     end
     opt,ksupp,moment,sol,GramMat,multiplier,SDP_status = solvesdp(obj, ineq_cons, eq_cons, n, rlorder, basis, ebasis, cliques, cql, cliquesize, I, J, 
     Iprime, Jprime, blocks, eblocks, cl, blocksize, z=z, QUIET=QUIET, TS=TS, ConjugateBasis=ConjugateBasis, solve=solve, MomentOne=MomentOne, 
-    ipart=ipart, solution=solution, Gram=Gram, nb=nb, mosek_setting=mosek_setting, model=model, dualize=dualize, writetofile=writetofile, normality=normality)
+    ipart=ipart, solution=solution, Gram=Gram, nb=nb, mosek_setting=mosek_setting, model=model, dualize=dualize, writetofile=writetofile, normality=normality, joint_normality=joint_normality)
     flag = 1
     if solution == true
         if TS != false
@@ -290,7 +325,7 @@ function complex_cs_tssos(npop::Vector{cpoly{T}}, n::Int, d; numeq=0, RemSig=fal
             flag = 0
         end
     end
-    data = cpop_data(pop, obj, ineq_cons, eq_cons, z, rlorder, n, nb, numeq, ipart, ConjugateBasis, normality, basis, ebasis, ksupp, 
+    data = cpop_data(pop, obj, ineq_cons, eq_cons, z, rlorder, n, nb, numeq, ipart, ConjugateBasis, normality, joint_normality, basis, ebasis, ksupp, 
     cliquesize, cliques, I, J, Iprime, Jprime, blocksize, blocks, eblocks, GramMat, multiplier, moment, SDP_status, rtol, gtol, ftol, flag)
     return opt,sol,data
 end
@@ -332,7 +367,8 @@ function complex_cs_tssos(data::cpop_data; TS="block", eqTS=TS, merge=false, md=
         end
         opt,ksupp,moment,sol,GramMat,multiplier,SDP_status = solvesdp(obj, ineq_cons, eq_cons, n, data.rlorder, basis, ebasis, cliques, cql, cliquesize, I, J, 
     data.Iprime, data.Jprime, blocks, eblocks, cl, blocksize, z=data.z, QUIET=QUIET, TS=TS, ConjugateBasis=data.ConjugateBasis, solve=solve, MomentOne=MomentOne, 
-    ipart=data.ipart, solution=solution, Gram=Gram, nb=nb, mosek_setting=mosek_setting, model=model, dualize=dualize, writetofile=writetofile, normality=data.normality)
+    ipart=data.ipart, solution=solution, Gram=Gram, nb=nb, mosek_setting=mosek_setting, model=model, dualize=dualize, writetofile=writetofile, 
+    normality=data.normality, joint_normality=data.joint_normality)
         if solution == true
             if data.pop !== nothing
                 asol = check_solution([sol], opt, data.pop, data.z, numeq=numeq, gtol=data.gtol, ftol=data.ftol, QUIET=true)
@@ -383,18 +419,24 @@ function complex_tssos(data::cpop_data; TS="block", eqTS=TS, merge=false, md=3, 
     MomentOne=MomentOne, mosek_setting=mosek_setting, model=model, writetofile=writetofile)
 end
 
-function get_csupp(rlorder::Vector{Int}, basis, ebasis, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, I, J, Iprime, Jprime, blocks, eblocks, cl, blocksize, cql, cliquesize; norm=false, nb=0, ConjugateBasis=false, normality=1) where {T1,T2<:cpoly}
+function get_csupp(rlorder::Vector{Int}, basis, ebasis, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, I, J, Iprime, Jprime, blocks, eblocks, cl, blocksize, cql, cliquesize; norm=false, nb=0, ConjugateBasis=false, normality=1, joint_normality=0) where {T1,T2<:cpoly}
     csupp = norm == true ? Vector{UInt16}[] : Tuple{Vector{UInt16},Vector{UInt16}}[]
     for i = 1:cql
         if ConjugateBasis == false
-            a = normality > 0 ? 1 + cliquesize[i] : 1
+            if normality > 0
+                a = 1 + cliquesize[i]
+            elseif joint_normality > 0
+                a = 2
+            else
+                a = 1
+            end
         else
             a = normality >= rlorder[i] ? 1 + cliquesize[i] : 1
         end
         for (j, w) in enumerate(I[i][a+1:end]), l = 1:cl[i][j+a], t = 1:blocksize[i][j+a][l], r = t:blocksize[i][j+a][l], item in ineq_cons[w].supp
             ind1 = blocks[i][j+a][l][t]
             ind2 = blocks[i][j+a][l][r]
-            if ConjugateBasis == false
+            if ConjugateBasis == false && joint_normality == 0
                 @inbounds bi = tuple(sadd(basis[i][j+a][ind1], item[1]), sadd(basis[i][j+a][ind2], item[2]))
             else
                 @inbounds bi = tuple(sadd(basis[i][j+a][ind1][1], item[1], basis[i][j+a][ind2][2]), sadd(basis[i][j+a][ind1][2], item[2], basis[i][j+a][ind2][1]))
@@ -437,11 +479,17 @@ end
 
 function solvesdp(obj::T1, ineq_cons::Vector{T2}, eq_cons::Vector{T3}, n, rlorder, basis, ebasis, cliques, cql, cliquesize, I, J, Iprime, Jprime, blocks, eblocks, cl, blocksize; 
     nb=0, z=nothing, QUIET=false, TS="block", ConjugateBasis=false, solve=true, dualize=false, Gram=false, MomentOne=false, ipart=true, solution=false, 
-    mosek_setting=mosek_para(), model=nothing, writetofile=false, normality=1) where {T1,T2,T3<:cpoly}
+    mosek_setting=mosek_para(), model=nothing, writetofile=false, normality=1, joint_normality=0) where {T1,T2,T3<:cpoly}
     tsupp = Tuple{Vector{UInt16},Vector{UInt16}}[]
     for i = 1:cql
         if ConjugateBasis == false
-            a = normality > 0 ? 1 + cliquesize[i] : 1
+            if normality > 0
+                a = 1 + cliquesize[i]
+            elseif joint_normality > 0
+                a = 2
+            else
+                a = 1
+            end
         else
             a = normality >= rlorder[i] ? 1 + cliquesize[i] : 1
         end
@@ -455,8 +503,9 @@ function solvesdp(obj::T1, ineq_cons::Vector{T2}, eq_cons::Vector{T3}, n, rlorde
             bi[1] <= bi[2] ? push!(tsupp, bi) : push!(tsupp, conj(bi))
         end
     end
-    if TS != false
-        csupp = get_csupp(rlorder, basis, ebasis, ineq_cons, eq_cons, I, J, Iprime, Jprime, blocks, eblocks, cl, blocksize, cql, cliquesize, ConjugateBasis=ConjugateBasis, nb=nb, normality=normality)
+    if TS != false || joint_normality > 0
+        csupp = get_csupp(rlorder, basis, ebasis, ineq_cons, eq_cons, I, J, Iprime, Jprime, blocks, eblocks, cl, blocksize, cql, cliquesize, 
+        ConjugateBasis=ConjugateBasis, nb=nb, normality=normality, joint_normality=joint_normality)
         append!(tsupp, csupp)
     end
     if (MomentOne == true || solution == true) && TS != false

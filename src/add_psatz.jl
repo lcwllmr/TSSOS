@@ -610,8 +610,8 @@ function get_moment(mons::Vector{DP.Monomial{V, M}}, x, lb, ub) where {V, M}
 end
 
 function get_moment_matrix(moment, info)
-    MomMat = Vector{Symmetric{Float64}}(undef, info.cql)
-    for i = 1:info.cql
+    MomMat = Vector{Symmetric{Float64}}(undef, length(info.cliques))
+    for i = 1:length(info.cliques)
         lb = length(info.basis[i][1])
         mmat = zeros(Float64, lb, lb)
         for j = 1:lb, k = j:lb
