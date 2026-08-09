@@ -262,9 +262,9 @@ function cs_tssos(data::spop_data; TS="block", eqTS=TS, merge=false, md=3, QUIET
     return opt,sol,data
 end
 
-function solvesdp(obj::poly{T}, ineq_cons::Vector{poly{T}}, eq_cons::Vector{poly{T}}, basis, ebasis, cliques, cql, cliquesize, I, J, Iprime, Jprime, 
+function solvesdp(obj, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, basis, ebasis, cliques, cql, cliquesize, I, J, Iprime, Jprime, 
     blocks, eblocks, cl, blocksize; nb=0, QUIET=false, TS="block", solve=true, solution=false, Gram=false, MomentOne=false, mosek_setting=mosek_para(), 
-    model=nothing, dualize=false, writetofile=false) where {T<:Number}
+    model=nothing, dualize=false, writetofile=false) where {T1,T2<:poly}
     tsupp = Vector{UInt16}[]
     for i = 1:cql, j = 1:cl[i][1], k = 1:blocksize[i][1][j], r = k:blocksize[i][1][j]
         @inbounds bi = sadd(basis[i][1][blocks[i][1][j][k]], basis[i][1][blocks[i][1][j][r]], nb=nb)
@@ -427,7 +427,7 @@ function solvesdp(obj::poly{T}, ineq_cons::Vector{poly{T}}, eq_cons::Vector{poly
     return objv,ksupp,momone,moment,GramMat,multiplier,SDP_status
 end
 
-function get_blocks(ineq_cons::Vector{poly{T}}, eq_cons::Vector{poly{T}}, I, J, cliques, cql, tsupp, basis, ebasis; TS="block", eqTS=TS, nb=0, merge=false, md=3, signsymmetry=nothing) where {T<:Number}
+function get_blocks(ineq_cons::Vector{T1}, eq_cons::Vector{T2}, I, J, cliques, cql, tsupp, basis, ebasis; TS="block", eqTS=TS, nb=0, merge=false, md=3, signsymmetry=nothing) where {T1,T2<:poly}
     blocks = Vector{Vector{Vector{Vector{Int}}}}(undef, cql)
     cl = Vector{Vector{Int}}(undef, cql)
     blocksize = Vector{Vector{Vector{Int}}}(undef, cql)

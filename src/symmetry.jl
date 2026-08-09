@@ -649,7 +649,7 @@ function get_blocks(ineq_cons, eq_cons, tsupp, basis::Vector{Vector{Vector{T}}},
     return blocks,cl,blocksize,eblocks
 end
 
-function get_graph(tsupp, basis::Vector{T}, group, action; g=poly([UInt16[]], [1]), field="real") where {T <: Union{poly,cpoly}}
+function get_graph(tsupp, basis::Vector{T}, group, action; g=poly([UInt16[]], [1]), field="real") where {T<:Union{poly,cpoly}}
     lb = length(basis)
     G = SimpleGraph(lb)
     for i = 1:lb, j = i+1:lb
@@ -665,7 +665,7 @@ function get_graph(tsupp, basis::Vector{T}, group, action; g=poly([UInt16[]], [1
     return G
 end
 
-function get_eblock(tsupp, h, basis::Vector{T}, group, action) where {T <: Union{poly,cpoly}}
+function get_eblock(tsupp, h, basis::Vector{T}, group, action) where {T<:Union{poly,cpoly}}
     eblock = Int[]
     for (i, ba) in enumerate(basis)
         supp = supp_multi(ba, h, group, action)

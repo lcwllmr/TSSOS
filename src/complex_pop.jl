@@ -477,9 +477,9 @@ function get_csupp(rlorder::Vector{Int}, basis, ebasis, ineq_cons::Vector{T1}, e
     return csupp
 end
 
-function solvesdp(obj::T1, ineq_cons::Vector{T2}, eq_cons::Vector{T3}, n, rlorder, basis, ebasis, cliques, cql, cliquesize, I, J, Iprime, Jprime, blocks, eblocks, cl, blocksize; 
+function solvesdp(obj, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, n, rlorder, basis, ebasis, cliques, cql, cliquesize, I, J, Iprime, Jprime, blocks, eblocks, cl, blocksize; 
     nb=0, z=nothing, QUIET=false, TS="block", ConjugateBasis=false, solve=true, dualize=false, Gram=false, MomentOne=false, ipart=true, solution=false, 
-    mosek_setting=mosek_para(), model=nothing, writetofile=false, normality=1, joint_normality=0) where {T1,T2,T3<:cpoly}
+    mosek_setting=mosek_para(), model=nothing, writetofile=false, normality=1, joint_normality=0) where {T1,T2<:cpoly}
     tsupp = Tuple{Vector{UInt16},Vector{UInt16}}[]
     for i = 1:cql
         if ConjugateBasis == false

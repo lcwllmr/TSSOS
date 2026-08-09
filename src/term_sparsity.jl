@@ -282,7 +282,7 @@ function tssos(data::pop_data; TS="block", eqTS=TS, merge=false, md=3, QUIET=fal
     return opt,sol,data
 end
 
-function get_csupp(ineq_cons::Vector{poly{T}}, eq_cons::Vector{poly{T}}, basis, ebasis, blocks, eblocks, cl, blocksize; nb=0) where {T<:Number}
+function get_csupp(ineq_cons::Vector{T1}, eq_cons::Vector{T2}, basis, ebasis, blocks, eblocks, cl, blocksize; nb=0) where {T1,T2<:poly}
     csupp = Vector{UInt16}[]
     for (k, p) in enumerate(ineq_cons[2:end]), i = 1:cl[k+1], j = 1:blocksize[k+1][i], r = j:blocksize[k+1][i], item in p.supp
         @inbounds bi = sadd(basis[k+1][blocks[k+1][i][j]], item, basis[k+1][blocks[k+1][i][r]], nb=nb)
@@ -382,7 +382,7 @@ function get_eblock(tsupp, hsupp, basis::Vector{Vector{UInt16}}; nb=0, signsymme
     return eblock
 end
 
-function get_blocks(ineq_cons::Vector{poly{T}}, eq_cons::Vector{poly{T}}, tsupp, basis, ebasis; nb=0, TS="block", eqTS=TS, QUIET=true, merge=false, md=3, signsymmetry=nothing) where {T<:Number}
+function get_blocks(ineq_cons::Vector{T1}, eq_cons::Vector{T2}, tsupp, basis, ebasis; nb=0, TS="block", eqTS=TS, QUIET=true, merge=false, md=3, signsymmetry=nothing) where {T1,T2<:poly}
     blocks = Vector{Vector{Vector{Int}}}(undef, length(ineq_cons))
     blocksize = Vector{Vector{Int}}(undef, length(ineq_cons))
     cl = Vector{Int}(undef, length(ineq_cons))
@@ -420,9 +420,9 @@ function get_blocks(ineq_cons::Vector{poly{T}}, eq_cons::Vector{poly{T}}, tsupp,
     return blocks,cl,blocksize,eblocks
 end
 
-function solvesdp(obj, ineq_cons::Vector{poly{T}}, eq_cons::Vector{poly{T}}, n, basis, ebasis, blocks, eblocks, cl, blocksize; nb=0, gb=[], x=[], lead=[], TS="block",
+function solvesdp(obj, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, n, basis, ebasis, blocks, eblocks, cl, blocksize; nb=0, gb=[], x=[], lead=[], TS="block",
     QUIET=true, solve=true, feasibility=false, dualize=false, solution=false, MomentOne=false, Gram=false, mosek_setting=mosek_para(), signsymmetry=false, writetofile=false, 
-    normality=false, model=nothing) where {T<:Number}
+    normality=false, model=nothing) where {T1,T2<:poly}
     ksupp = Vector{UInt16}[]
     for i = 1:cl[1], j = 1:blocksize[1][i], r = j:blocksize[1][i]
         @inbounds bi = sadd(basis[1][blocks[1][i][j]], basis[1][blocks[1][i][r]], nb=nb)
