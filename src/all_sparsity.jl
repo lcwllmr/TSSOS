@@ -74,6 +74,9 @@ If `MomentOne=true`, add an extra first-order moment PSD constraint to the momen
 - `rtol`: tolerance for rank
 - `gtol`: tolerance for global optimality gap
 - `ftol`: tolerance for feasibility
+- `solution`: `true` to extract a solution, `false` to return `nothing`
+- `solution_mode`: `"local"` for extracting a rough solution and refining it with a local solver, `"moment"` for attempting to extract minimizers from the moment data
+- `local_solver`: solver for local optimization (if `solution_mode=="local"`)
 
 # Output arguments
 - `opt`: optimum
@@ -81,14 +84,16 @@ If `MomentOne=true`, add an extra first-order moment PSD constraint to the momen
 - `data`: other auxiliary data
 """
 function cs_tssos(pop::Vector{Poly{T}}, x, d; nb=0, numeq=0, CS="MF", cliques=[], basis=[], ebasis=[], TS="block", eqTS=TS, merge=false, md=3,
-    dualize=false, QUIET=false, solve=true, solution=false, Gram=false, MomentOne=false, mosek_setting=mosek_para(), model=nothing,
+    dualize=false, QUIET=false, solve=true, solution=false, solution_mode="local", local_solver=nothing, Gram=false, MomentOne=false, mosek_setting=mosek_para(), model=nothing,
     writetofile=false, rtol=1e-2, gtol=1e-2, ftol=1e-3) where {T<:Number}
     if nb > 0
         pop = Groebner.normalform(x[1:nb].^2 .- 1, pop)
     end
     npop = [poly(p, x) for p in pop]
     opt,sol,data = cs_tssos(npop, length(x), d, numeq=numeq, nb=nb, CS=CS, cliques=cliques, basis=basis, ebasis=ebasis, TS=TS,
-    eqTS=eqTS, merge=merge, md=md, QUIET=QUIET, dualize=dualize, solve=solve, solution=solution, Gram=Gram, MomentOne=MomentOne,
+    eqTS=eqTS, merge=merge, md=md, QUIET=QUIET, dualize=dualize, solve=solve,
+    solution=solution, solution_mode=solution_mode, local_solver=local_solver,
+    Gram=Gram, MomentOne=MomentOne,
     mosek_setting=mosek_setting, model=model, writetofile=writetofile, rtol=rtol, gtol=gtol, ftol=ftol, pop=pop, x=x)
     return opt,sol,data
 end
@@ -101,7 +106,8 @@ end
 Compute the first TS step of the CS-TSSOS hierarchy for constrained polynomial optimization.
 """
 function cs_tssos(npop::Vector{poly{T}}, n, d; numeq=0, nb=0, CS="MF", cliques=[], basis=[], ebasis=[], TS="block",
-    eqTS=TS, merge=false, md=3, QUIET=false, dualize=false, solve=true, solution=false, MomentOne=false, Gram=false,
+    eqTS=TS, merge=false, md=3, QUIET=false, dualize=false, solve=true, solution=false, solution_mode="local", local_solver=nothing,
+    Gram=false, MomentOne=false,
     mosek_setting=mosek_para(), model=nothing, writetofile=false, rtol=1e-2, gtol=1e-2, ftol=1e-3, pop=nothing, x=nothing) where {T<:Number}
     println("*********************************** TSSOS ***********************************")
     println("TSSOS is launching...")
@@ -178,23 +184,43 @@ function cs_tssos(npop::Vector{poly{T}}, n, d; numeq=0, nb=0, CS="MF", cliques=[
     multiplier, moment, SDP_status, rtol, gtol, ftol, 1)
     sol = nothing
     if solution == true
-        if TS != false
+        if solution_mode == "local"
             sol,gap,data.flag = approx_sol(momone, opt, n, cliques, cql, cliquesize, npop, numeq=numeq, gtol=gtol, ftol=ftol, QUIET=QUIET)
             if data.flag == 1
                 if gap > 1
-                    rsol,status,data.flag = refine_sol(opt, randn(n), data, QUIET=QUIET, gtol=gtol)
+                    if QUIET == false
+                        println("Gap between approximate local value and SDP optimum is large: refining with random starting point.")
+                    end
+                    rsol,status,data.flag = refine_sol(opt, randn(n), data, QUIET=QUIET, gtol=gtol, local_solver=local_solver)
                     if status == MOI.LOCALLY_SOLVED
                         sol = rsol
                     end
                 else
-                    sol,_,data.flag = refine_sol(opt, sol, data, QUIET=QUIET, gtol=gtol)
+                    if QUIET == false
+                        println("Gap between approximate local value and SDP optimum is small: refining with approximate moment-based solution.")
+                    end
+                    rsol,status,data.flag = refine_sol(opt, sol, data, QUIET=QUIET, gtol=gtol, local_solver=local_solver)
+                    if status == MOI.LOCALLY_SOLVED
+                        sol = rsol
+                    else
+                        println("Refining rough moment-based solution failed: re-trying with random starting point")
+                        rsol,status,data.flag = refine_sol(opt, randn(n), data, QUIET=QUIET, gtol=gtol, local_solver=local_solver)
+                        if status == MOI.LOCALLY_SOLVED
+                            sol = rsol
+                        end
+                    end
                 end
             end
-        else
+        elseif solution_mode == "moment"
+            if QUIET == false
+                println("Attempting robust minimizer extraction...")
+            end
             sol = extract_solutions_robust(moment, n, d, cliques, cql, cliquesize, pop=pop, x=x, npop=npop, lb=opt, numeq=numeq, check=true, rtol=rtol, gtol=gtol, ftol=ftol, QUIET=QUIET)[1]
             if sol !== nothing
                 data.flag = 0
             end
+        else
+            throw(ArgumentError("Solution mode '$(solution_mode)' not recognized."))
         end
     end
     return opt,sol,data

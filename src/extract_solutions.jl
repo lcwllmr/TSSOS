@@ -418,7 +418,8 @@ function check_solution(candidate_sol, lb, pop::Vector{P}, x; numeq=0, gtol=1e-2
         end
         println("------------------------------------------------")
     else
-        sol = nothing
+        println("Global optimality certification FAILED.")
+        sol = candidate_sol[1]
     end
     return sol
 end

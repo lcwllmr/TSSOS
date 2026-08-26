@@ -16,8 +16,13 @@ Compute a local solution by a local solver.
 - `sol`: local solution
 - `status`: solver termination status
 """
-function local_solution(npop, n; nb=0, numeq=0, startpoint=[], QUIET=false)
-    model = Model(optimizer_with_attributes(Ipopt.Optimizer))
+function local_solution(npop, n; nb=0, numeq=0, startpoint=[], QUIET=false, local_solver=nothing)
+    if local_solver === nothing
+        model = Model(optimizer_with_attributes(Ipopt.Optimizer))
+    else
+        model = local_solver()
+    end
+
     set_optimizer_attribute(model, MOI.Silent(), QUIET)
     if QUIET == true
         set_optimizer_attribute(model, "print_level", 0)
@@ -53,7 +58,7 @@ end
 Refine the obtained solution by a local solver.
 Return the refined solution, and `flag=0` if global optimality is certified, `flag=1` otherwise.
 """
-function refine_sol(opt, sol, data::Union{pop_data,spop_data}; QUIET=false, gtol=1e-2)
+function refine_sol(opt, sol, data::Union{pop_data,spop_data}; QUIET=false, gtol=1e-2, local_solver=nothing)
     numeq = data.numeq
     if typeof(data) == pop_data && !isempty(data.gb)
         npop = [data.obj; data.ineq_cons[2:end]; [poly(p, data.x) for p in data.pop[end-numeq+1:end]]]
@@ -61,7 +66,7 @@ function refine_sol(opt, sol, data::Union{pop_data,spop_data}; QUIET=false, gtol
         npop = [data.obj; data.ineq_cons[2:end]; data.eq_cons]
     end
     sol[abs.(sol) .< 1e-10] .= 1e-10
-    ub,rsol,status = local_solution(npop, data.n, nb=data.nb, numeq=numeq, startpoint=sol, QUIET=QUIET)
+    ub,rsol,status = local_solution(npop, data.n, nb=data.nb, numeq=numeq, startpoint=sol, QUIET=QUIET, local_solver=local_solver)
     if status == MOI.LOCALLY_SOLVED
         gap = abs(opt-ub)/max(1, abs(ub))
         if gap < gtol
