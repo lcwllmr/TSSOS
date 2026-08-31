@@ -346,6 +346,13 @@ function solvesdp(obj, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, basis, ebasis
         time = @elapsed begin
         cons = [AffExpr(0) for i=1:length(tsupp)]
         pos = Vector{Vector{Vector{Symmetric{VariableRef}}}}(undef, cql)
+        # SDP structure accounting
+        psd_block_sizes = Int[]
+        num_nonneg_scalars = 0
+        num_free_scalars = 0
+        if QUIET == false
+            println("Collecting SDP structure statistics...")
+        end
         for i = 1:cql
             if (MomentOne == true || solution == true) && TS != false
                 bas = [[UInt16[]]; [UInt16[k] for k in cliques[i]]]
@@ -358,6 +365,7 @@ function solvesdp(obj, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, basis, ebasis
                         @inbounds add_to_expression!(cons[Locb], 2, pos0[t,r])
                     end
                 end
+                push!(psd_block_sizes, length(bas))
             end
             pos[i] = Vector{Vector{Symmetric{VariableRef}}}(undef, length(I[i]))
             for (j, w) in enumerate(I[i])
@@ -373,6 +381,7 @@ function solvesdp(obj, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, basis, ebasis
                             @inbounds add_to_expression!(cons[Locb], 2*ineq_cons[w].coe[s], pos[i][j][l][t,r])
                         end
                     end
+                    push!(psd_block_sizes, blocksize[i][j][l])
                 end
             end
         end
@@ -387,6 +396,7 @@ function solvesdp(obj, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, basis, ebasis
                     @inbounds add_to_expression!(cons[Locb], eq_cons[w].coe[s], free[i][j][u])
                 end
             end
+            num_free_scalars += sum(length.(eblocks[i]))
         end
         for i in Iprime
             pos0 = @variable(model, lower_bound=0)
@@ -394,6 +404,7 @@ function solvesdp(obj, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, basis, ebasis
                 Locb = bfind(tsupp, item)
                 @inbounds add_to_expression!(cons[Locb], ineq_cons[i].coe[j], pos0)
             end
+            num_nonneg_scalars += 1
         end
         for i in Jprime
             pos0 = @variable(model)
@@ -401,6 +412,7 @@ function solvesdp(obj, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, basis, ebasis
                 Locb = bfind(tsupp, item)
                 @inbounds add_to_expression!(cons[Locb], eq_cons[i].coe[j], pos0)
             end
+            num_free_scalars += 1
         end
         for (i, item) in enumerate(obj.supp)
             Locb = bfind(tsupp, item)
@@ -415,6 +427,24 @@ function solvesdp(obj, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, basis, ebasis
         cons[1] += lower
         @constraint(model, con, cons==zeros(length(cons)))
         @objective(model, Max, lower)
+        end
+        if QUIET == false
+            psd_hist = Dict{Int, Int}()
+            for sz in psd_block_sizes
+                psd_hist[sz] = get(psd_hist, sz, 0) + 1
+            end
+            println("-----------------------------------------------------------------------------")
+            println("Final SDP structure:")
+            println("  affine equality constraints: $(length(cons))")
+            println("  PSD matrix variables: $(length(psd_block_sizes))")
+            println("  PSD block sizes: $(psd_block_sizes)")
+            println("  PSD block-size histogram (size => count):")
+            for sz in sort(collect(keys(psd_hist)))
+                println("    $sz => $(psd_hist[sz])")
+            end
+            println("  nonnegative scalar variables: $(num_nonneg_scalars)")
+            println("  free scalar variables: $(num_free_scalars + 1)  # +1 for objective lower")
+            println("-----------------------------------------------------------------------------")
         end
         if QUIET == false
             println("SDP assembling time: $time seconds.")
