@@ -218,6 +218,8 @@ function cs_tssos(npop::Vector{poly{T}}, n, d; numeq=0, nb=0, CS="MF", cliques=[
             sol = extract_solutions_robust(moment, n, d, cliques, cql, cliquesize, pop=pop, x=x, npop=npop, lb=opt, numeq=numeq, check=true, rtol=rtol, gtol=gtol, ftol=ftol, QUIET=QUIET)[1]
             if sol !== nothing
                 data.flag = 0
+            else
+                data.flag = 1
             end
         else
             throw(ArgumentError("Solution mode '$(solution_mode)' not recognized."))
