@@ -1,3 +1,15 @@
+function _get_inner_sdp_time()
+    for (pkg, mod) in Base.loaded_modules
+        if pkg.name == "SDPSanitizer" && isdefined(mod, :get_last_inner_solve_time)
+            t = mod.get_last_inner_solve_time()
+            if t > 0.0
+                return t
+            end
+        end
+    end
+    return 0.0
+end
+
 mutable struct spop_data
     pop # polynomial optimiztion problem
     obj # objective
@@ -27,6 +39,8 @@ mutable struct spop_data
     gtol # tolerance for global optimality gap
     ftol # tolerance for feasibility
     flag # 0 if global optimality is certified; 1 otherwise
+    timings # Dict{Symbol, Any}
+    spop_data(args...) = length(args) == 28 ? new(args..., Dict{Symbol, Any}()) : new(args...)
 end
 
 """
@@ -85,7 +99,7 @@ If `MomentOne=true`, add an extra first-order moment PSD constraint to the momen
 """
 function cs_tssos(pop::Vector{Poly{T}}, x, d; nb=0, numeq=0, CS="MF", cliques=[], basis=[], ebasis=[], TS="block", eqTS=TS, merge=false, md=3,
     dualize=false, QUIET=false, solve=true, solution=false, solution_mode="local", local_solver=nothing, Gram=false, MomentOne=false, mosek_setting=mosek_para(), model=nothing,
-    writetofile=false, rtol=1e-2, gtol=1e-2, ftol=1e-3) where {T<:Number}
+    writetofile=false, rtol=1e-2, gtol=1e-2, ftol=1e-3, timings=nothing) where {T<:Number}
     if nb > 0
         pop = Groebner.normalform(x[1:nb].^2 .- 1, pop)
     end
@@ -94,7 +108,7 @@ function cs_tssos(pop::Vector{Poly{T}}, x, d; nb=0, numeq=0, CS="MF", cliques=[]
     eqTS=eqTS, merge=merge, md=md, QUIET=QUIET, dualize=dualize, solve=solve,
     solution=solution, solution_mode=solution_mode, local_solver=local_solver,
     Gram=Gram, MomentOne=MomentOne,
-    mosek_setting=mosek_setting, model=model, writetofile=writetofile, rtol=rtol, gtol=gtol, ftol=ftol, pop=pop, x=x)
+    mosek_setting=mosek_setting, model=model, writetofile=writetofile, rtol=rtol, gtol=gtol, ftol=ftol, pop=pop, x=x, timings=timings)
     return opt,sol,data
 end
 
@@ -108,7 +122,11 @@ Compute the first TS step of the CS-TSSOS hierarchy for constrained polynomial o
 function cs_tssos(npop::Vector{poly{T}}, n, d; numeq=0, nb=0, CS="MF", cliques=[], basis=[], ebasis=[], TS="block",
     eqTS=TS, merge=false, md=3, QUIET=false, dualize=false, solve=true, solution=false, solution_mode="local", local_solver=nothing,
     Gram=false, MomentOne=false,
-    mosek_setting=mosek_para(), model=nothing, writetofile=false, rtol=1e-2, gtol=1e-2, ftol=1e-3, pop=nothing, x=nothing) where {T<:Number}
+    mosek_setting=mosek_para(), model=nothing, writetofile=false, rtol=1e-2, gtol=1e-2, ftol=1e-3, pop=nothing, x=nothing, timings=nothing) where {T<:Number}
+    t_tssos_start = Base.time()
+    if timings === nothing
+        timings = Dict{Symbol, Any}()
+    end
     println("*********************************** TSSOS ***********************************")
     println("TSSOS is launching...")
     obj = npop[1]
@@ -179,10 +197,12 @@ function cs_tssos(npop::Vector{poly{T}}, n, d; numeq=0, nb=0, CS="MF", cliques=[
     end
     opt,ksupp,momone,moment,GramMat,multiplier,SDP_status = solvesdp(obj, ineq_cons, eq_cons, basis, ebasis, cliques, cql, cliquesize, I, J, Iprime, Jprime, blocks,
     eblocks, cl, blocksize, nb=nb, QUIET=QUIET, TS=TS, dualize=dualize, solve=solve, solution=solution, MomentOne=MomentOne, Gram=Gram, mosek_setting=mosek_setting,
-    model=model, writetofile=writetofile)
+    model=model, writetofile=writetofile, t_tssos_start=t_tssos_start, timings=timings)
     data = spop_data(pop, obj, ineq_cons, eq_cons, x, n, nb, numeq, basis, ebasis, ksupp, cliquesize, cliques, I, J, Iprime, Jprime, blocksize, blocks, eblocks, GramMat,
-    multiplier, moment, SDP_status, rtol, gtol, ftol, 1)
+    multiplier, moment, SDP_status, rtol, gtol, ftol, 1, timings)
     sol = nothing
+    timings[:robust_extraction_time] = 0.0
+    timings[:robust_succeeded] = false
     if solution == true
         if solution_mode == "local"
             sol,gap,data.flag = approx_sol(momone, opt, n, cliques, cql, cliquesize, npop, numeq=numeq, gtol=gtol, ftol=ftol, QUIET=QUIET)
@@ -215,7 +235,11 @@ function cs_tssos(npop::Vector{poly{T}}, n, d; numeq=0, nb=0, CS="MF", cliques=[
             if QUIET == false
                 println("Attempting robust minimizer extraction...")
             end
+            t_rob_start = Base.time()
             sol = extract_solutions_robust(moment, n, d, cliques, cql, cliquesize, pop=pop, x=x, npop=npop, lb=opt, numeq=numeq, check=true, rtol=rtol, gtol=gtol, ftol=ftol, QUIET=QUIET)[1]
+            rob_time = Base.time() - t_rob_start
+            timings[:robust_extraction_time] = rob_time
+            timings[:robust_succeeded] = (sol !== nothing)
             if sol !== nothing
                 data.flag = 0
             else
@@ -292,7 +316,7 @@ end
 
 function solvesdp(obj, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, basis, ebasis, cliques, cql, cliquesize, I, J, Iprime, Jprime,
     blocks, eblocks, cl, blocksize; nb=0, QUIET=false, TS="block", solve=true, solution=false, Gram=false, MomentOne=false, mosek_setting=mosek_para(),
-    model=nothing, dualize=false, writetofile=false) where {T1,T2<:poly}
+    model=nothing, dualize=false, writetofile=false, t_tssos_start=nothing, timings=nothing) where {T1,T2<:poly}
     tsupp = Vector{UInt16}[]
     for i = 1:cql, j = 1:cl[i][1], k = 1:blocksize[i][1][j], r = k:blocksize[i][1][j]
         @inbounds bi = sadd(basis[i][1][blocks[i][1][j][k]], basis[i][1][blocks[i][1][j][r]], nb=nb)
@@ -454,14 +478,34 @@ function solvesdp(obj, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, basis, ebasis
         if writetofile != false
             write_to_file(dualize(model), writetofile)
         else
+            if t_tssos_start !== nothing && timings !== nothing
+                timings[:tssos_preparation_time] = Base.time() - t_tssos_start
+            end
             if QUIET == false
                 println("Solving the SDP...")
             end
-            time = @elapsed begin
+            t_sdp_opt_start = Base.time()
             optimize!(model)
+            sdp_total_time = Base.time() - t_sdp_opt_start
+            inner_sdp_time = _get_inner_sdp_time()
+            if inner_sdp_time <= 0.0
+                sdp_presolve = 0.0
+                sdp_solve = sdp_total_time
+            else
+                sdp_solve = inner_sdp_time
+                sdp_presolve = max(0.0, sdp_total_time - inner_sdp_time)
+            end
+            if timings !== nothing
+                timings[:sdp_presolve_time] = sdp_presolve
+                timings[:sdp_solve_time] = sdp_solve
+                timings[:sdp_status] = string(termination_status(model))
             end
             if QUIET == false
-                println("SDP solving time: $time seconds.")
+                if sdp_presolve > 0.0
+                    @printf("SDP presolve time: %.4f seconds. SDP solve time: %.4f seconds.\n", sdp_presolve, sdp_solve)
+                else
+                    @printf("SDP solving time: %.4f seconds.\n", sdp_solve)
+                end
             end
             SDP_status = termination_status(model)
             objv = objective_value(model)
