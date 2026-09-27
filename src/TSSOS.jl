@@ -60,4 +60,24 @@ include("Chebyshev_basis.jl")
 include("complex_pop.jl")
 include("symmetry.jl")
 
+using PrecompileTools: @setup_workload, @compile_workload
+
+@setup_workload begin
+    @polyvar _x[1:2]
+    _pop = [_x[1]^2 + _x[2]^2, 1.0 - _x[1]^2 - _x[2]^2, _x[1] - 0.5]
+    redirect_stdout(devnull) do
+        @compile_workload begin
+            _npop = [poly(p, _x) for p in _pop]
+            local_solution(_npop, 2; numeq=1, startpoint=[0.5, 0.0], QUIET=true)
+            try
+                tssos(_pop, _x, 1; numeq=1, TS="block", QUIET=true, solution=true)
+                opt, _, data = cs_tssos(_pop, _x, 1; numeq=1, CS="MF", TS="block", QUIET=true, solution=true, solution_mode="moment")
+                cs_tssos(_pop, _x, 1; numeq=1, cliques=[[1, 2]], TS="block", QUIET=true, solution=true, solution_mode="local")
+                refine_sol(opt, [0.5, 0.0], data; QUIET=true)
+            catch
+            end
+        end
+    end
+end
+
 end
