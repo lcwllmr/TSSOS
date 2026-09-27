@@ -146,11 +146,15 @@ end
 
 function extract_solutions_robust(moment, n, d, cliques, cql, cliquesize; pop=nothing, x=nothing, npop=nothing, lb=nothing, numeq=0, check=false, rtol=1e-2, gtol=1e-2, ftol=1e-3, QUIET=true)
     ssol = Vector{Vector{Vector{Float64}}}(undef, cql)
+    w_max = Vector{Int}(undef, cql)
     sol = zeros(n)
     freq = zeros(n)
     @threads for i = 1:cql
         ssol[i],w = extract_solutions_robust(moment[i], cliquesize[i], d, check=false, rtol=rtol, gtol=gtol, ftol=ftol)
-        sol[cliques[i]] += ssol[i][argmax(w)]
+        w_max[i] = argmax(w)
+    end
+    for i = 1:cql
+        sol[cliques[i]] += ssol[i][w_max[i]]
         freq[cliques[i]] .+= 1
     end
     sol ./= freq
@@ -166,11 +170,15 @@ end
 
 function extract_csolutions_robust(moment, n, d, cliques, cql, cliquesize; pop=nothing, z=nothing, npop=nothing, lb=nothing, numeq=0, check=false, rtol=1e-2, gtol=1e-2, ftol=1e-3, QUIET=true)
     ssol = Vector{Vector{Vector{ComplexF64}}}(undef, cql)
+    w_max = Vector{Int}(undef, cql)
     sol = zeros(ComplexF64, n)
     freq = zeros(n)
     @threads for i = 1:cql
         ssol[i],w = extract_solutions_robust(moment[i][1], cliquesize[i], d, type=ComplexF64, check=false, rtol=rtol, gtol=gtol, ftol=ftol)
-        sol[cliques[i]] += ssol[i][argmax(w)]
+        w_max[i] = argmax(w)
+    end
+    for i = 1:cql
+        sol[cliques[i]] += ssol[i][w_max[i]]
         freq[cliques[i]] .+= 1
     end
     sol ./= freq
