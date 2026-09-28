@@ -9,13 +9,6 @@ function chordal_cliques!(G; method="MF", minimize=false)
     # compute maximal cliques
     label, tree = CliqueTrees.cliquetree(G; alg)
     
-    # triangulate graph
-    F = CliqueTrees.FilledGraph(tree)
-    
-    for edge in edges(F)
-        add_edge!(G, label[src(edge)], label[dst(edge)])
-    end
-    
     # return maximal cliques
     maximal_cliques = Vector{Vector{Int}}(undef, length(tree))
     

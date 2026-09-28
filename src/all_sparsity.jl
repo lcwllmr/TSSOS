@@ -548,7 +548,7 @@ function clique_decomp(npop::Vector{T}, n, numeq; order="min", alg="MF", QUIET=f
     else
         G = SimpleGraph(n)
         for (i, p) in enumerate(npop)
-            if order == "min" || i == 1 || (order == ceil(Int, maxdeg(p)/2) && i <= length(npop)-numeq) || (2*order == maxdeg(p) && i > length(npop)-numeq)
+            if i == 1 || (maxdeg(p) > 1 && (order == "min" || (order == ceil(Int, maxdeg(p)/2) && i <= length(npop)-numeq) || (2*order == maxdeg(p) && i > length(npop)-numeq)))
                 foreach(item -> add_clique!(G, unique(item)), p.supp)
             else
                 add_clique!(G, unique(reduce(vcat, p.supp)))
