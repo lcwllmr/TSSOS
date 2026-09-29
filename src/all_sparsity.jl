@@ -10,6 +10,14 @@ function _get_inner_sdp_time()
     return 0.0
 end
 
+function _reset_inner_sdp_time()
+    for (pkg, mod) in Base.loaded_modules
+        if pkg.name == "SDPSanitizer" && isdefined(mod, :reset_solve_times!)
+            mod.reset_solve_times!()
+        end
+    end
+end
+
 mutable struct spop_data
     pop # polynomial optimiztion problem
     obj # objective
@@ -517,6 +525,7 @@ function solvesdp(obj, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, basis, ebasis
             if QUIET == false
                 println("Solving the SDP...")
             end
+            _reset_inner_sdp_time()
             t_sdp_opt_start = Base.time()
             optimize!(model)
             sdp_total_time = Base.time() - t_sdp_opt_start
