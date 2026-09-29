@@ -163,21 +163,25 @@ function tssos(pop::Vector{Poly{T}}, x, d; nb=0, numeq=0, newton=false, feasibil
     sol = nothing
     if solution == true
         if TS != false || !isempty(gb)
-            sol,gap,data.flag = extract_solution(momone, opt, pop, x, numeq=numeq, gtol=gtol, ftol=ftol, QUIET=true)
-            if data.flag == 1
-                if gap > 1
-                    rsol,status,data.flag = refine_sol(opt, randn(n), data, QUIET=true, gtol=gtol)
-                    if status == MOI.LOCALLY_SOLVED
-                        sol = rsol
+            if momone !== nothing
+                sol,gap,data.flag = extract_solution(momone, opt, pop, x, numeq=numeq, gtol=gtol, ftol=ftol, QUIET=true)
+                if data.flag == 1
+                    if gap > 1
+                        rsol,status,data.flag = refine_sol(opt, randn(n), data, QUIET=true, gtol=gtol)
+                        if status == MOI.LOCALLY_SOLVED
+                            sol = rsol
+                        end
+                    else
+                        sol,_,data.flag = refine_sol(opt, sol, data, QUIET=true, gtol=gtol)
                     end
-                else
-                    sol,_,data.flag = refine_sol(opt, sol, data, QUIET=true, gtol=gtol)
                 end
             end
         else
-            sol = extract_solutions_robust(moment[1], n, d, pop=pop, x=x, lb=opt, numeq=numeq, basis=basis[1], check=true, rtol=rtol, gtol=gtol, ftol=ftol, QUIET=QUIET)[1]
-            if sol !== nothing
-                data.flag = 0
+            if moment !== nothing
+                sol = extract_solutions_robust(moment[1], n, d, pop=pop, x=x, lb=opt, numeq=numeq, basis=basis[1], check=true, rtol=rtol, gtol=gtol, ftol=ftol, QUIET=QUIET)[1]
+                if sol !== nothing
+                    data.flag = 0
+                end
             end
         end
     end
@@ -643,53 +647,68 @@ function solvesdp(obj, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, n, basis, eba
                 println("SDP solving time: $time seconds.")
             end
             SDP_status = termination_status(model)
-            objv = objective_value(model)
-            if SDP_status != MOI.OPTIMAL
-                println("termination status: $SDP_status")
-                status = primal_status(model)
-                println("solution status: $status")
+            p_status = primal_status(model)
+            d_status = dual_status(model)
+            objv = try
+                objective_value(model)
+            catch
+                nothing
             end
+            println("termination status: $SDP_status")
+            println("solution status: $p_status")
+            println("dual status: $d_status")
             println("optimum = $objv")
             if Gram == true
-                GramMat = [[value.(pos[k][i]) for i = 1:cl[k]] for k = 1:length(ineq_cons)]
-                multiplier = [value.(free[j]) for j = 1:length(eq_cons)]
-            end
-            dual_var = -dual(con)
-            moment = Vector{Symmetric{Float64}}(undef, cl[1])
-            for i = 1:cl[1]
-                mmat = zeros(blocksize[1][i], blocksize[1][i])
-                for j = 1:blocksize[1][i], k = j:blocksize[1][i]
-                    bi = sadd(basis[1][blocks[1][i][j]], basis[1][blocks[1][i][k]], nb=nb)
-                    if !isempty(gb) && divide(bi, lead)
-                        rem = reminder(bi, x, gb)
-                        for (l, item) in enumerate(rem.supp)
-                            Locb = bfind(tsupp, item)
-                            mmat[j,k] += rem.coe[l]*dual_var[Locb]
-                        end
-                    else
-                        Locb = bfind(tsupp, bi)
-                        mmat[j,k] = dual_var[Locb]
-                    end
+                try
+                    GramMat = [[value.(pos[k][i]) for i = 1:cl[k]] for k = 1:length(ineq_cons)]
+                    multiplier = [value.(free[j]) for j = 1:length(eq_cons)]
+                catch err
+                    @warn "Could not retrieve Gram matrix / multipliers (termination_status=$SDP_status): $err"
                 end
-                moment[i] = Symmetric(mmat, :U)
             end
-            if solution == true && (TS != false || !isempty(gb))
-                momone = zeros(Float64, n+1, n+1)
-                bas = [[UInt16[]]; [UInt16[i] for i = 1:n]]
-                for j = 1:n+1, k = j:n+1
-                    bi = sadd(bas[j], bas[k], nb=nb)
-                    if !isempty(gb) && divide(bi, lead)
-                        rem = reminder(bi, x, gb)
-                        for (l, item) in enumerate(rem.supp)
-                            Locb = bfind(tsupp, item)
-                            momone[j,k] += rem.coe[l]*dual_var[Locb]
+            dual_var = nothing
+            try
+                dual_var = -dual(con)
+            catch err
+                @warn "Could not retrieve dual variables from SDP (termination_status=$SDP_status, dual_status=$d_status): $err"
+            end
+            if dual_var !== nothing && !isempty(dual_var)
+                moment = Vector{Symmetric{Float64}}(undef, cl[1])
+                for i = 1:cl[1]
+                    mmat = zeros(blocksize[1][i], blocksize[1][i])
+                    for j = 1:blocksize[1][i], k = j:blocksize[1][i]
+                        bi = sadd(basis[1][blocks[1][i][j]], basis[1][blocks[1][i][k]], nb=nb)
+                        if !isempty(gb) && divide(bi, lead)
+                            rem = reminder(bi, x, gb)
+                            for (l, item) in enumerate(rem.supp)
+                                Locb = bfind(tsupp, item)
+                                mmat[j,k] += rem.coe[l]*dual_var[Locb]
+                            end
+                        else
+                            Locb = bfind(tsupp, bi)
+                            mmat[j,k] = dual_var[Locb]
                         end
-                    else
-                        Locb = bfind(tsupp, bi)
-                        momone[j,k] = dual_var[Locb]
                     end
+                    moment[i] = Symmetric(mmat, :U)
                 end
-                momone = Symmetric(momone, :U)
+                if solution == true && (TS != false || !isempty(gb))
+                    momone = zeros(Float64, n+1, n+1)
+                    bas = [[UInt16[]]; [UInt16[i] for i = 1:n]]
+                    for j = 1:n+1, k = j:n+1
+                        bi = sadd(bas[j], bas[k], nb=nb)
+                        if !isempty(gb) && divide(bi, lead)
+                            rem = reminder(bi, x, gb)
+                            for (l, item) in enumerate(rem.supp)
+                                Locb = bfind(tsupp, item)
+                                momone[j,k] += rem.coe[l]*dual_var[Locb]
+                            end
+                        else
+                            Locb = bfind(tsupp, bi)
+                            momone[j,k] = dual_var[Locb]
+                        end
+                    end
+                    momone = Symmetric(momone, :U)
+                end
             end
         end
     end

@@ -128,6 +128,14 @@ function extract_solutions_robust(moment, n, d; type=Float64, pop=nothing, x=not
         end
     end
     F = svd(moment[1:ls, 1:ls])
+    if isempty(F.S) || F.S[1] <= 0
+        sol = [zeros(type, n)]
+        w = [1.0]
+        if check == true
+            sol = check_solution(sol, lb, pop, x, numeq=numeq, gtol=gtol, ftol=ftol, QUIET=QUIET)
+        end
+        return sol,w
+    end
     S = sqrt.(F.S[F.S/F.S[1] .> rtol])
     for i = 1:n
         N[i] = Diagonal(S.^(-1))*F.Vt[1:length(S),:]*N[i]*F.U[:,1:length(S)]*Diagonal(S.^(-1))

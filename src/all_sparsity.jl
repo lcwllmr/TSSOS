@@ -136,6 +136,7 @@ function cs_tssos(npop::Vector{poly{T}}, n, d; numeq=0, nb=0, CS="MF", cliques=[
     ineq_cons = [poly{T}([UInt16[]], [1]); npop[2:end-numeq]]
     eq_cons = npop[end-numeq+1:end]
     if !isempty(cliques)
+        foreach(sort!, cliques)
         cql = length(cliques)
         cliquesize = length.(cliques)
     else
@@ -143,6 +144,7 @@ function cs_tssos(npop::Vector{poly{T}}, n, d; numeq=0, nb=0, CS="MF", cliques=[
         CS = CS == true ? "MF" : CS
         cliques,cql,cliquesize = clique_decomp(npop, n, numeq, order=d, alg=CS)
         end
+        foreach(sort!, cliques)
         if CS != false && QUIET == false
             println("Obtained the variable cliques in $time seconds. The maximal size of cliques is $(maximum(cliquesize)).")
         end
@@ -163,11 +165,18 @@ function cs_tssos(npop::Vector{poly{T}}, n, d; numeq=0, nb=0, CS="MF", cliques=[
         @threads for i in 1:cql
             basis[i] = Vector{Vector{Vector{UInt16}}}(undef, length(I[i]))
             ebasis[i] = Vector{Vector{Vector{UInt16}}}(undef, length(J[i]))
+            basis_cache = Dict{Int, Vector{Vector{UInt16}}}()
             for (s, k) in enumerate(I[i])
-                basis[i][s] = get_basis(cliques[i], rlorder[i]-ceil(Int, maxdeg(ineq_cons[k])/2), nb=nb)
+                deg = rlorder[i] - ceil(Int, maxdeg(ineq_cons[k])/2)
+                basis[i][s] = get!(basis_cache, deg) do
+                    get_basis(cliques[i], deg, nb=nb)
+                end
             end
             for (s, k) in enumerate(J[i])
-                ebasis[i][s] = get_basis(cliques[i], 2*rlorder[i]-maxdeg(eq_cons[k]), nb=nb)
+                deg = 2*rlorder[i] - maxdeg(eq_cons[k])
+                ebasis[i][s] = get!(basis_cache, deg) do
+                    get_basis(cliques[i], deg, nb=nb)
+                end
             end
         end
     end
@@ -205,45 +214,59 @@ function cs_tssos(npop::Vector{poly{T}}, n, d; numeq=0, nb=0, CS="MF", cliques=[
     timings[:robust_succeeded] = false
     if solution == true
         if solution_mode == "local"
-            sol,gap,data.flag = approx_sol(momone, opt, n, cliques, cql, cliquesize, npop, numeq=numeq, gtol=gtol, ftol=ftol, QUIET=QUIET)
-            if data.flag == 1
-                if gap > 1
-                    if QUIET == false
-                        println("Gap between approximate local value and SDP optimum is large: refining with random starting point.")
-                    end
-                    rsol,status,data.flag = refine_sol(opt, randn(n), data, QUIET=QUIET, gtol=gtol, local_solver=local_solver)
-                    if status == MOI.LOCALLY_SOLVED
-                        sol = rsol
-                    end
-                else
-                    if QUIET == false
-                        println("Gap between approximate local value and SDP optimum is small: refining with approximate moment-based solution.")
-                    end
-                    rsol,status,data.flag = refine_sol(opt, sol, data, QUIET=QUIET, gtol=gtol, local_solver=local_solver)
-                    if status == MOI.LOCALLY_SOLVED
-                        sol = rsol
-                    else
-                        println("Refining rough moment-based solution failed: re-trying with random starting point")
+            if momone === nothing
+                @warn "Dual moment matrices unavailable (SDP status: $SDP_status); refining with random starting point."
+                data.flag = 1
+                rsol,status,data.flag = refine_sol(opt !== nothing ? opt : 0.0, randn(n), data, QUIET=QUIET, gtol=gtol, local_solver=local_solver)
+                if status == MOI.LOCALLY_SOLVED
+                    sol = rsol
+                end
+            else
+                sol,gap,data.flag = approx_sol(momone, opt, n, cliques, cql, cliquesize, npop, numeq=numeq, gtol=gtol, ftol=ftol, QUIET=QUIET)
+                if data.flag == 1
+                    if gap > 1
+                        if QUIET == false
+                            println("Gap between approximate local value and SDP optimum is large: refining with random starting point.")
+                        end
                         rsol,status,data.flag = refine_sol(opt, randn(n), data, QUIET=QUIET, gtol=gtol, local_solver=local_solver)
                         if status == MOI.LOCALLY_SOLVED
                             sol = rsol
+                        end
+                    else
+                        if QUIET == false
+                            println("Gap between approximate local value and SDP optimum is small: refining with approximate moment-based solution.")
+                        end
+                        rsol,status,data.flag = refine_sol(opt, sol, data, QUIET=QUIET, gtol=gtol, local_solver=local_solver)
+                        if status == MOI.LOCALLY_SOLVED
+                            sol = rsol
+                        else
+                            println("Refining rough moment-based solution failed: re-trying with random starting point")
+                            rsol,status,data.flag = refine_sol(opt, randn(n), data, QUIET=QUIET, gtol=gtol, local_solver=local_solver)
+                            if status == MOI.LOCALLY_SOLVED
+                                sol = rsol
+                            end
                         end
                     end
                 end
             end
         elseif solution_mode == "moment"
-            if QUIET == false
-                println("Attempting robust minimizer extraction...")
-            end
-            t_rob_start = Base.time()
-            sol = extract_solutions_robust(moment, n, d, cliques, cql, cliquesize, pop=pop, x=x, npop=npop, lb=opt, numeq=numeq, check=true, rtol=rtol, gtol=gtol, ftol=ftol, QUIET=QUIET)[1]
-            rob_time = Base.time() - t_rob_start
-            timings[:robust_extraction_time] = rob_time
-            timings[:robust_succeeded] = (sol !== nothing)
-            if sol !== nothing
-                data.flag = 0
-            else
+            if moment === nothing
+                @warn "Dual moment matrices unavailable (SDP status: $SDP_status); skipping moment extraction."
                 data.flag = 1
+            else
+                if QUIET == false
+                    println("Attempting robust minimizer extraction...")
+                end
+                t_rob_start = Base.time()
+                sol = extract_solutions_robust(moment, n, d, cliques, cql, cliquesize, pop=pop, x=x, npop=npop, lb=opt, numeq=numeq, check=true, rtol=rtol, gtol=gtol, ftol=ftol, QUIET=QUIET)[1]
+                rob_time = Base.time() - t_rob_start
+                timings[:robust_extraction_time] = rob_time
+                timings[:robust_succeeded] = (sol !== nothing)
+                if sol !== nothing
+                    data.flag = 0
+                else
+                    data.flag = 1
+                end
             end
         else
             throw(ArgumentError("Solution mode '$(solution_mode)' not recognized."))
@@ -289,7 +312,7 @@ function cs_tssos(data::spop_data; TS="block", eqTS=TS, merge=false, md=3, QUIET
         data.Iprime, data.Jprime, blocks, eblocks, cl, blocksize, nb=nb, QUIET=QUIET, solve=solve, solution=solution, dualize=dualize, MomentOne=MomentOne,
         Gram=Gram, mosek_setting=mosek_setting, model=model, writetofile=writetofile)
         sol = nothing
-        if solution == true
+        if solution == true && momone !== nothing
             sol,gap,data.flag = approx_sol(momone, opt, n, cliques, cql, cliquesize, [obj; ineq_cons[2:end]; eq_cons], numeq=numeq, gtol=data.gtol, ftol=data.ftol, QUIET=true)
             if data.flag == 1
                 if gap > 1
@@ -318,9 +341,15 @@ function solvesdp(obj, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, basis, ebasis
     blocks, eblocks, cl, blocksize; nb=0, QUIET=false, TS="block", solve=true, solution=false, Gram=false, MomentOne=false, mosek_setting=mosek_para(),
     model=nothing, dualize=false, writetofile=false, t_tssos_start=nothing, timings=nothing) where {T1,T2<:poly}
     tsupp = Vector{UInt16}[]
-    for i = 1:cql, j = 1:cl[i][1], k = 1:blocksize[i][1][j], r = k:blocksize[i][1][j]
-        @inbounds bi = sadd(basis[i][1][blocks[i][1][j][k]], basis[i][1][blocks[i][1][j][r]], nb=nb)
-        push!(tsupp, bi)
+    for i = 1:cql
+        for j = 1:cl[i][1], k = 1:blocksize[i][1][j], r = k:blocksize[i][1][j]
+            @inbounds bi = sadd(basis[i][1][blocks[i][1][j][k]], basis[i][1][blocks[i][1][j][r]], nb=nb)
+            push!(tsupp, bi)
+        end
+        if length(tsupp) > 500_000
+            sort!(tsupp)
+            unique!(tsupp)
+        end
     end
     if TS != false && TS != "signsymmetry"
         for i = 1:cql
@@ -331,6 +360,10 @@ function solvesdp(obj, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, basis, ebasis
             for (j, w) in enumerate(J[i]), k in eblocks[i][j], item in eq_cons[w].supp
                 @inbounds bi = sadd(ebasis[i][j][k], item, nb=nb)
                 push!(tsupp, bi)
+            end
+            if length(tsupp) > 500_000
+                sort!(tsupp)
+                unique!(tsupp)
             end
         end
         for i in Iprime
@@ -508,25 +541,54 @@ function solvesdp(obj, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, basis, ebasis
                 end
             end
             SDP_status = termination_status(model)
-            objv = objective_value(model)
-            if SDP_status != MOI.OPTIMAL
-                println("termination status: $SDP_status")
-                status = primal_status(model)
-                println("solution status: $status")
+            p_status = primal_status(model)
+            d_status = dual_status(model)
+            objv = try
+                objective_value(model)
+            catch
+                nothing
             end
+            println("termination status: $SDP_status")
+            println("solution status: $p_status")
+            println("dual status: $d_status")
             println("optimum = $objv")
             if Gram == true
-                GramMat = [[[value.(pos[i][j][l]) for l = 1:cl[i][j]] for j = 1:length(I[i])] for i = 1:cql]
-                multiplier = [[value.(free[i][j]) for j = 1:length(J[i])] for i = 1:cql]
+                try
+                    GramMat = [[[value.(pos[i][j][l]) for l = 1:cl[i][j]] for j = 1:length(I[i])] for i = 1:cql]
+                    multiplier = [[value.(free[i][j]) for j = 1:length(J[i])] for i = 1:cql]
+                catch err
+                    @warn "Could not retrieve Gram matrix / multipliers (termination_status=$SDP_status): $err"
+                end
             end
-            dual_var = -dual(con)
-            if solution == true && TS != false
-                momone = get_moment(dual_var, tsupp, cliques, cql, cliquesize, nb=nb)
+            dual_var = nothing
+            try
+                dual_var = -dual(con)
+            catch err
+                @warn "Could not retrieve dual variables from SDP (termination_status=$SDP_status, dual_status=$d_status): $err"
             end
-            moment = get_moment(dual_var, tsupp, cliques, cql, cliquesize, basis=basis, nb=nb)
+            if dual_var !== nothing && !isempty(dual_var)
+                if solution == true && TS != false
+                    momone = get_moment(dual_var, tsupp, cliques, cql, cliquesize, nb=nb)
+                end
+                moment = get_moment(dual_var, tsupp, cliques, cql, cliquesize, basis=basis, nb=nb)
+            end
         end
     end
     return objv,ksupp,momone,moment,GramMat,multiplier,SDP_status
+end
+
+@inline function _is_sorted_subset(a::AbstractVector, b::AbstractVector)
+    j = 1
+    nb = length(b)
+    @inbounds for ai in a
+        while j <= nb && b[j] < ai
+            j += 1
+        end
+        if j > nb || b[j] != ai
+            return false
+        end
+    end
+    return true
 end
 
 function get_blocks(ineq_cons::Vector{T1}, eq_cons::Vector{T2}, I, J, cliques, cql, tsupp, basis, ebasis; TS="block", eqTS=TS, nb=0, merge=false, md=3, signsymmetry=nothing) where {T1,T2<:poly}
@@ -535,7 +597,7 @@ function get_blocks(ineq_cons::Vector{T1}, eq_cons::Vector{T2}, I, J, cliques, c
     blocksize = Vector{Vector{Vector{Int}}}(undef, cql)
     eblocks = Vector{Vector{Vector{Int}}}(undef, cql)
     @threads for i = 1:cql
-        ksupp = (TS == false || TS == "signsymmetry") ? nothing : tsupp[[issubset(item, cliques[i]) for item in tsupp]]
+        ksupp = (TS == false || TS == "signsymmetry") ? nothing : [item for item in tsupp if _is_sorted_subset(item, cliques[i])]
         blocks[i],cl[i],blocksize[i],eblocks[i] = get_blocks(ineq_cons[I[i]], eq_cons[J[i]], ksupp, basis[i],
         ebasis[i], TS=TS, eqTS=eqTS, nb=nb, QUIET=true, merge=merge, md=md, signsymmetry=signsymmetry)
     end
@@ -576,19 +638,29 @@ function assign_constraint(ineq_cons::Vector{T1}, eq_cons::Vector{T2}, cliques, 
     Iprime = Int[]
     Jprime = Int[]
     for (i, p) in enumerate(ineq_cons)
-        ind = findall(k->issubset(unique(reduce(vcat, p.supp)), cliques[k]), 1:cql)
-        if isempty(ind)
-            push!(Iprime, i)
+        vars_p = sort!(Int.(unique(reduce(vcat, p.supp; init=UInt16[]))))
+        if isempty(vars_p)
+            for k in 1:cql
+                push!(I[k], i)
+            end
         else
-            push!.(I[ind], i)
+            ind = findall(k -> _is_sorted_subset(vars_p, cliques[k]), 1:cql)
+            if isempty(ind)
+                push!(Iprime, i)
+            else
+                best_k = ind[argmin([length(cliques[k]) for k in ind])]
+                push!(I[best_k], i)
+            end
         end
     end
     for (i, p) in enumerate(eq_cons)
-        ind = findall(k->issubset(unique(reduce(vcat, p.supp)), cliques[k]), 1:cql)
+        vars_p = sort!(Int.(unique(reduce(vcat, p.supp; init=UInt16[]))))
+        ind = findall(k -> _is_sorted_subset(vars_p, cliques[k]), 1:cql)
         if isempty(ind)
             push!(Jprime, i)
         else
-            push!.(J[ind], i)
+            best_k = ind[argmin([length(cliques[k]) for k in ind])]
+            push!(J[best_k], i)
         end
     end
     return I,J,Iprime,Jprime
