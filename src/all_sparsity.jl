@@ -107,7 +107,7 @@ If `MomentOne=true`, add an extra first-order moment PSD constraint to the momen
 """
 function cs_tssos(pop::Vector{Poly{T}}, x, d; nb=0, numeq=0, CS="MF", cliques=[], basis=[], ebasis=[], TS="block", eqTS=TS, merge=false, md=3,
     dualize=false, QUIET=false, solve=true, solution=false, solution_mode="local", local_solver=nothing, Gram=false, MomentOne=false, mosek_setting=mosek_para(), model=nothing,
-    writetofile=false, rtol=1e-2, gtol=1e-2, ftol=1e-3, timings=nothing) where {T<:Number}
+    writetofile=false, rtol=1e-2, gtol=1e-2, ftol=1e-3, timings=nothing, scalar_ineqs=Int[]) where {T<:Number}
     if nb > 0
         pop = Groebner.normalform(x[1:nb].^2 .- 1, pop)
     end
@@ -116,7 +116,7 @@ function cs_tssos(pop::Vector{Poly{T}}, x, d; nb=0, numeq=0, CS="MF", cliques=[]
     eqTS=eqTS, merge=merge, md=md, QUIET=QUIET, dualize=dualize, solve=solve,
     solution=solution, solution_mode=solution_mode, local_solver=local_solver,
     Gram=Gram, MomentOne=MomentOne,
-    mosek_setting=mosek_setting, model=model, writetofile=writetofile, rtol=rtol, gtol=gtol, ftol=ftol, pop=pop, x=x, timings=timings)
+    mosek_setting=mosek_setting, model=model, writetofile=writetofile, rtol=rtol, gtol=gtol, ftol=ftol, pop=pop, x=x, timings=timings, scalar_ineqs=scalar_ineqs)
     return opt,sol,data
 end
 
@@ -130,7 +130,7 @@ Compute the first TS step of the CS-TSSOS hierarchy for constrained polynomial o
 function cs_tssos(npop::Vector{poly{T}}, n, d; numeq=0, nb=0, CS="MF", cliques=[], basis=[], ebasis=[], TS="block",
     eqTS=TS, merge=false, md=3, QUIET=false, dualize=false, solve=true, solution=false, solution_mode="local", local_solver=nothing,
     Gram=false, MomentOne=false,
-    mosek_setting=mosek_para(), model=nothing, writetofile=false, rtol=1e-2, gtol=1e-2, ftol=1e-3, pop=nothing, x=nothing, timings=nothing) where {T<:Number}
+    mosek_setting=mosek_para(), model=nothing, writetofile=false, rtol=1e-2, gtol=1e-2, ftol=1e-3, pop=nothing, x=nothing, timings=nothing, scalar_ineqs=Int[]) where {T<:Number}
     t_tssos_start = Base.time()
     if timings === nothing
         timings = Dict{Symbol, Any}()
@@ -157,7 +157,8 @@ function cs_tssos(npop::Vector{poly{T}}, n, d; numeq=0, nb=0, CS="MF", cliques=[
             println("Obtained the variable cliques in $time seconds. The maximal size of cliques is $(maximum(cliquesize)).")
         end
     end
-    I,J,Iprime,Jprime = assign_constraint(ineq_cons, eq_cons, cliques, cql)
+    scalar_ineq_set = Set{Int}([i + 1 for i in scalar_ineqs])
+    I,J,Iprime,Jprime = assign_constraint(ineq_cons, eq_cons, cliques, cql; scalar_ineqs=scalar_ineq_set)
     if d == "min"
         rlorder = [isempty(I[i]) && isempty(J[i]) ? 1 : ceil(Int, maximum([maxdeg.(ineq_cons[I[i]]); maxdeg.(eq_cons[J[i]])])/2) for i = 1:cql]
     else
@@ -641,12 +642,16 @@ function clique_decomp(npop::Vector{T}, n, numeq; order="min", alg="MF", QUIET=f
     return cliques,cql,cliquesize
 end
 
-function assign_constraint(ineq_cons::Vector{T1}, eq_cons::Vector{T2}, cliques, cql) where {T1,T2<:poly}
+function assign_constraint(ineq_cons::Vector{T1}, eq_cons::Vector{T2}, cliques, cql; scalar_ineqs=Set{Int}()) where {T1,T2<:poly}
     I = [Int[] for i=1:cql]
     J = [Int[] for i=1:cql]
     Iprime = Int[]
     Jprime = Int[]
     for (i, p) in enumerate(ineq_cons)
+        if i in scalar_ineqs
+            push!(Iprime, i)
+            continue
+        end
         vars_p = sort!(Int.(unique(reduce(vcat, p.supp; init=UInt16[]))))
         if isempty(vars_p)
             for k in 1:cql
