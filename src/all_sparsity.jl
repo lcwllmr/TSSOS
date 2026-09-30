@@ -195,12 +195,28 @@ function cs_tssos(npop::Vector{poly{T}}, n, d; numeq=0, nb=0, CS="MF", cliques=[
     end
     ksupp = nothing
     if TS != false && TS != "signsymmetry"
-        ksupp = reduce(vcat, [p.supp for p in npop])
+        ksupp = Vector{UInt16}[]
+        append!(ksupp, obj.supp)
+        for (i, p) in enumerate(ineq_cons)
+            if i == 1
+                continue
+            elseif i in scalar_ineq_set
+                for item in p.supp
+                    if length(item) > 2
+                        push!(ksupp, item)
+                    end
+                end
+            else
+                append!(ksupp, p.supp)
+            end
+        end
+        for p in eq_cons
+            append!(ksupp, p.supp)
+        end
         for k = 1:cql, item in basis[k][1]
             push!(ksupp, sadd(item, item, nb=nb))
         end
-        sort!(ksupp)
-        unique!(ksupp)
+        _sort_unique!(ksupp)
     end
     time = @elapsed begin
     ss = nothing
@@ -350,14 +366,15 @@ function solvesdp(obj, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, basis, ebasis
     blocks, eblocks, cl, blocksize; nb=0, QUIET=false, TS="block", solve=true, solution=false, Gram=false, MomentOne=false, mosek_setting=mosek_para(),
     model=nothing, dualize=false, writetofile=false, t_tssos_start=nothing, timings=nothing) where {T1,T2<:poly}
     tsupp = Vector{UInt16}[]
+    compact_threshold = 500_000
     for i = 1:cql
         for j = 1:cl[i][1], k = 1:blocksize[i][1][j], r = k:blocksize[i][1][j]
             @inbounds bi = sadd(basis[i][1][blocks[i][1][j][k]], basis[i][1][blocks[i][1][j][r]], nb=nb)
             push!(tsupp, bi)
         end
-        if length(tsupp) > 500_000
-            sort!(tsupp)
-            unique!(tsupp)
+        if length(tsupp) > compact_threshold
+            _sort_unique!(tsupp)
+            compact_threshold = length(tsupp) + 500_000
         end
     end
     if TS != false && TS != "signsymmetry"
@@ -370,9 +387,9 @@ function solvesdp(obj, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, basis, ebasis
                 @inbounds bi = sadd(ebasis[i][j][k], item, nb=nb)
                 push!(tsupp, bi)
             end
-            if length(tsupp) > 500_000
-                sort!(tsupp)
-                unique!(tsupp)
+            if length(tsupp) > compact_threshold
+                _sort_unique!(tsupp)
+                compact_threshold = length(tsupp) + 500_000
             end
         end
         for i in Iprime
@@ -382,17 +399,13 @@ function solvesdp(obj, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, basis, ebasis
             append!(tsupp, eq_cons[i].supp)
         end
     end
-    if (MomentOne == true || solution == true) && TS != false
+    _sort_unique!(tsupp)
+    if (MomentOne == true || solution == true || !isempty(Iprime)) && TS != false
         ksupp = copy(tsupp)
         for i = 1:cql
             append!(tsupp, get_basis(cliques[i], 2, nb=nb))
         end
-    end
-    sort!(tsupp)
-    unique!(tsupp)
-    if (MomentOne == true || solution == true) && TS != false
-        sort!(ksupp)
-        unique!(ksupp)
+        _sort_unique!(tsupp)
     else
         ksupp = tsupp
     end
@@ -422,7 +435,7 @@ function solvesdp(obj, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, basis, ebasis
             println("Collecting SDP structure statistics...")
         end
         for i = 1:cql
-            if (MomentOne == true || solution == true) && TS != false
+            if (MomentOne == true || solution == true || !isempty(Iprime)) && TS != false
                 bas = [[UInt16[]]; [UInt16[k] for k in cliques[i]]]
                 pos0 = @variable(model, [1:length(bas), 1:length(bas)], PSD)
                 for t = 1:length(bas), r = t:length(bas)
@@ -585,6 +598,22 @@ function solvesdp(obj, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, basis, ebasis
         end
     end
     return objv,ksupp,momone,moment,GramMat,multiplier,SDP_status
+end
+
+function _sort_unique!(v::Vector)
+    sort!(v)
+    isempty(v) && return v
+    write_idx = 1
+    @inbounds for read_idx in 2:length(v)
+        if v[read_idx] != v[write_idx]
+            write_idx += 1
+            if write_idx != read_idx
+                v[write_idx] = v[read_idx]
+            end
+        end
+    end
+    resize!(v, write_idx)
+    return v
 end
 
 @inline function _is_sorted_subset(a::AbstractVector, b::AbstractVector)
