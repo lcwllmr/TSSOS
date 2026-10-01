@@ -36,7 +36,7 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 [compat]
 AbstractPermutations = "< 0.3.2"
 COSMO = "0.8.11"
-ClusteredLowRankSolver = "2.2.0"
+ClusteredLowRankSolver = ">= 2"
 DynamicPolynomials = ">= 0.5.0"
 Mosek = ">= 10.2.0"
 MultivariateBases = "0.2.2"
