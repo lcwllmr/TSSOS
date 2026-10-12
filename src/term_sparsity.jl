@@ -346,11 +346,26 @@ function reducebasis!(supp, basis, blocks, cl, blocksize; nb=0)
     end
 end
 
-function get_graph(tsupp, supp::Vector{Vector{UInt16}}, basis::Vector{Vector{UInt16}}; nb=0, TS="block", signsymmetry=nothing)
+function get_graph(tsupp, supp::Vector{Vector{UInt16}}, basis::Vector{Vector{UInt16}}; nb=0, TS="block", signsymmetry=nothing, basis_type="monomial")
     lb = length(basis)
     G = SimpleGraph(lb)
     for i = 1:lb, j = i+1:lb
-        if TS != "signsymmetry"
+        if basis_type == "chebyshev"
+            flag = false
+            for item in supp
+                ch_terms = cheby_product(basis[i], basis[j], item)
+                for (bi, _) in ch_terms
+                    if bfind(tsupp, bi) !== nothing
+                        flag = true
+                        break
+                    end
+                end
+                flag && break
+            end
+            if flag
+                add_edge!(G, i, j)
+            end
+        elseif TS != "signsymmetry"
             ind = findfirst(item -> bfind(tsupp, sadd(basis[i], item, basis[j], nb=nb)) !== nothing, supp)
             if ind !== nothing
                 add_edge!(G, i, j)
@@ -367,10 +382,25 @@ function get_graph(tsupp, supp::Vector{Vector{UInt16}}, basis::Vector{Vector{UIn
     return G
 end
 
-function get_eblock(tsupp, hsupp, basis::Vector{Vector{UInt16}}; nb=0, signsymmetry=nothing)
+function get_eblock(tsupp, hsupp, basis::Vector{Vector{UInt16}}; nb=0, signsymmetry=nothing, basis_type="monomial")
     eblock = Int[]
     for (i, item) in enumerate(basis)
-        if signsymmetry === nothing
+        if basis_type == "chebyshev"
+            flag = false
+            for nitem in hsupp
+                ch_terms = cheby_product(item, nitem)
+                for (bi, _) in ch_terms
+                    if bfind(tsupp, bi) !== nothing
+                        flag = true
+                        break
+                    end
+                end
+                flag && break
+            end
+            if flag
+                push!(eblock, i)
+            end
+        elseif signsymmetry === nothing
             if findfirst(nitem -> bfind(tsupp, sadd(item, nitem, nb=nb)) !== nothing, hsupp) !== nothing
                 push!(eblock, i)
             end
@@ -386,7 +416,7 @@ function get_eblock(tsupp, hsupp, basis::Vector{Vector{UInt16}}; nb=0, signsymme
     return eblock
 end
 
-function get_blocks(ineq_cons::Vector{T1}, eq_cons::Vector{T2}, tsupp, basis, ebasis; nb=0, TS="block", eqTS=TS, QUIET=true, merge=false, md=3, signsymmetry=nothing) where {T1,T2<:poly}
+function get_blocks(ineq_cons::Vector{T1}, eq_cons::Vector{T2}, tsupp, basis, ebasis; nb=0, TS="block", eqTS=TS, QUIET=true, merge=false, md=3, signsymmetry=nothing, basis_type="monomial") where {T1,T2<:poly}
     blocks = Vector{Vector{Vector{Int}}}(undef, length(ineq_cons))
     blocksize = Vector{Vector{Int}}(undef, length(ineq_cons))
     cl = Vector{Int}(undef, length(ineq_cons))
@@ -396,7 +426,7 @@ function get_blocks(ineq_cons::Vector{T1}, eq_cons::Vector{T2}, tsupp, basis, eb
         end
     else
         for k = 1:length(ineq_cons)
-            G = get_graph(tsupp, ineq_cons[k].supp, basis[k], nb=nb, TS=TS, signsymmetry=signsymmetry)
+            G = get_graph(tsupp, ineq_cons[k].supp, basis[k], nb=nb, TS=TS, signsymmetry=signsymmetry, basis_type=basis_type)
             if TS == true || TS == "block" || TS == "signsymmetry"
                 blocks[k] = connected_components(G)
                 blocksize[k] = length.(blocks[k])
@@ -417,7 +447,7 @@ function get_blocks(ineq_cons::Vector{T1}, eq_cons::Vector{T2}, tsupp, basis, eb
         end
     end
     if eqTS != false
-        eblocks = [get_eblock(tsupp, eq_cons[k].supp, ebasis[k], nb=nb, signsymmetry=signsymmetry) for k = 1:length(eq_cons)]
+        eblocks = [get_eblock(tsupp, eq_cons[k].supp, ebasis[k], nb=nb, signsymmetry=signsymmetry, basis_type=basis_type) for k = 1:length(eq_cons)]
     else
         eblocks = [Vector(1:length(ebasis[k])) for k = 1:length(eq_cons)]
     end

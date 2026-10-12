@@ -107,7 +107,7 @@ If `MomentOne=true`, add an extra first-order moment PSD constraint to the momen
 """
 function cs_tssos(pop::Vector{Poly{T}}, x, d; nb=0, numeq=0, CS="MF", cliques=[], basis=[], ebasis=[], TS="block", eqTS=TS, merge=false, md=3,
     dualize=false, QUIET=false, solve=true, solution=false, solution_mode="local", local_solver=nothing, Gram=false, MomentOne=false, mosek_setting=mosek_para(), model=nothing,
-    writetofile=false, rtol=1e-2, gtol=1e-2, ftol=1e-3, timings=nothing, scalar_ineqs=Int[]) where {T<:Number}
+    writetofile=false, rtol=1e-2, gtol=1e-2, ftol=1e-3, timings=nothing, scalar_ineqs=Int[], basis_type="monomial") where {T<:Number}
     if nb > 0
         pop = Groebner.normalform(x[1:nb].^2 .- 1, pop)
     end
@@ -116,7 +116,7 @@ function cs_tssos(pop::Vector{Poly{T}}, x, d; nb=0, numeq=0, CS="MF", cliques=[]
     eqTS=eqTS, merge=merge, md=md, QUIET=QUIET, dualize=dualize, solve=solve,
     solution=solution, solution_mode=solution_mode, local_solver=local_solver,
     Gram=Gram, MomentOne=MomentOne,
-    mosek_setting=mosek_setting, model=model, writetofile=writetofile, rtol=rtol, gtol=gtol, ftol=ftol, pop=pop, x=x, timings=timings, scalar_ineqs=scalar_ineqs)
+    mosek_setting=mosek_setting, model=model, writetofile=writetofile, rtol=rtol, gtol=gtol, ftol=ftol, pop=pop, x=x, timings=timings, scalar_ineqs=scalar_ineqs, basis_type=basis_type)
     return opt,sol,data
 end
 
@@ -130,7 +130,7 @@ Compute the first TS step of the CS-TSSOS hierarchy for constrained polynomial o
 function cs_tssos(npop::Vector{poly{T}}, n, d; numeq=0, nb=0, CS="MF", cliques=[], basis=[], ebasis=[], TS="block",
     eqTS=TS, merge=false, md=3, QUIET=false, dualize=false, solve=true, solution=false, solution_mode="local", local_solver=nothing,
     Gram=false, MomentOne=false,
-    mosek_setting=mosek_para(), model=nothing, writetofile=false, rtol=1e-2, gtol=1e-2, ftol=1e-3, pop=nothing, x=nothing, timings=nothing, scalar_ineqs=Int[]) where {T<:Number}
+    mosek_setting=mosek_para(), model=nothing, writetofile=false, rtol=1e-2, gtol=1e-2, ftol=1e-3, pop=nothing, x=nothing, timings=nothing, scalar_ineqs=Int[], basis_type="monomial") where {T<:Number}
     t_tssos_start = Base.time()
     if timings === nothing
         timings = Dict{Symbol, Any}()
@@ -214,7 +214,13 @@ function cs_tssos(npop::Vector{poly{T}}, n, d; numeq=0, nb=0, CS="MF", cliques=[
             append!(ksupp, p.supp)
         end
         for k = 1:cql, item in basis[k][1]
-            push!(ksupp, sadd(item, item, nb=nb))
+            if basis_type == "chebyshev"
+                for (bi, _) in cheby_product(item, item)
+                    push!(ksupp, bi)
+                end
+            else
+                push!(ksupp, sadd(item, item, nb=nb))
+            end
         end
         _sort_unique!(ksupp)
     end
@@ -223,7 +229,7 @@ function cs_tssos(npop::Vector{poly{T}}, n, d; numeq=0, nb=0, CS="MF", cliques=[
     if TS == "signsymmetry" || eqTS == "signsymmetry"
         ss = get_signsymmetry(npop, n)
     end
-    blocks,cl,blocksize,eblocks = get_blocks(ineq_cons, eq_cons, I, J, cliques, cql, ksupp, basis, ebasis, nb=nb, TS=TS, eqTS=eqTS, merge=merge, md=md, signsymmetry=ss)
+    blocks,cl,blocksize,eblocks = get_blocks(ineq_cons, eq_cons, I, J, cliques, cql, ksupp, basis, ebasis, nb=nb, TS=TS, eqTS=eqTS, merge=merge, md=md, signsymmetry=ss, basis_type=basis_type)
     end
     if QUIET == false
         mb = maximum(maximum.([maximum.(blocksize[i]) for i = 1:cql]))
@@ -231,7 +237,7 @@ function cs_tssos(npop::Vector{poly{T}}, n, d; numeq=0, nb=0, CS="MF", cliques=[
     end
     opt,ksupp,momone,moment,GramMat,multiplier,SDP_status = solvesdp(obj, ineq_cons, eq_cons, basis, ebasis, cliques, cql, cliquesize, I, J, Iprime, Jprime, blocks,
     eblocks, cl, blocksize, nb=nb, QUIET=QUIET, TS=TS, dualize=dualize, solve=solve, solution=solution, MomentOne=MomentOne, Gram=Gram, mosek_setting=mosek_setting,
-    model=model, writetofile=writetofile, t_tssos_start=t_tssos_start, timings=timings)
+    model=model, writetofile=writetofile, t_tssos_start=t_tssos_start, timings=timings, basis_type=basis_type)
     data = spop_data(pop, obj, ineq_cons, eq_cons, x, n, nb, numeq, basis, ebasis, ksupp, cliquesize, cliques, I, J, Iprime, Jprime, blocksize, blocks, eblocks, GramMat,
     multiplier, moment, SDP_status, rtol, gtol, ftol, 1, timings)
     sol = nothing
@@ -364,13 +370,20 @@ end
 
 function solvesdp(obj, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, basis, ebasis, cliques, cql, cliquesize, I, J, Iprime, Jprime,
     blocks, eblocks, cl, blocksize; nb=0, QUIET=false, TS="block", solve=true, solution=false, Gram=false, MomentOne=false, mosek_setting=mosek_para(),
-    model=nothing, dualize=false, writetofile=false, t_tssos_start=nothing, timings=nothing) where {T1,T2<:poly}
+    model=nothing, dualize=false, writetofile=false, t_tssos_start=nothing, timings=nothing, basis_type="monomial") where {T1,T2<:poly}
     tsupp = Vector{UInt16}[]
     compact_threshold = 500_000
     for i = 1:cql
         for j = 1:cl[i][1], k = 1:blocksize[i][1][j], r = k:blocksize[i][1][j]
-            @inbounds bi = sadd(basis[i][1][blocks[i][1][j][k]], basis[i][1][blocks[i][1][j][r]], nb=nb)
-            push!(tsupp, bi)
+            if basis_type == "chebyshev"
+                ch_terms = cheby_product(basis[i][1][blocks[i][1][j][k]], basis[i][1][blocks[i][1][j][r]])
+                for (bi, _) in ch_terms
+                    push!(tsupp, bi)
+                end
+            else
+                @inbounds bi = sadd(basis[i][1][blocks[i][1][j][k]], basis[i][1][blocks[i][1][j][r]], nb=nb)
+                push!(tsupp, bi)
+            end
         end
         if length(tsupp) > compact_threshold
             _sort_unique!(tsupp)
@@ -380,12 +393,26 @@ function solvesdp(obj, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, basis, ebasis
     if TS != false && TS != "signsymmetry"
         for i = 1:cql
             for (j, w) in enumerate(I[i][2:end]), l = 1:cl[i][j+1], t = 1:blocksize[i][j+1][l], r = t:blocksize[i][j+1][l], item in ineq_cons[w].supp
-                @inbounds bi = sadd(basis[i][j+1][blocks[i][j+1][l][t]], item, basis[i][j+1][blocks[i][j+1][l][r]], nb=nb)
-                push!(tsupp, bi)
+                if basis_type == "chebyshev"
+                    ch_terms = cheby_product(basis[i][j+1][blocks[i][j+1][l][t]], basis[i][j+1][blocks[i][j+1][l][r]], item)
+                    for (bi, _) in ch_terms
+                        push!(tsupp, bi)
+                    end
+                else
+                    @inbounds bi = sadd(basis[i][j+1][blocks[i][j+1][l][t]], item, basis[i][j+1][blocks[i][j+1][l][r]], nb=nb)
+                    push!(tsupp, bi)
+                end
             end
             for (j, w) in enumerate(J[i]), k in eblocks[i][j], item in eq_cons[w].supp
-                @inbounds bi = sadd(ebasis[i][j][k], item, nb=nb)
-                push!(tsupp, bi)
+                if basis_type == "chebyshev"
+                    ch_terms = cheby_product(ebasis[i][j][k], item)
+                    for (bi, _) in ch_terms
+                        push!(tsupp, bi)
+                    end
+                else
+                    @inbounds bi = sadd(ebasis[i][j][k], item, nb=nb)
+                    push!(tsupp, bi)
+                end
             end
             if length(tsupp) > compact_threshold
                 _sort_unique!(tsupp)
@@ -399,11 +426,24 @@ function solvesdp(obj, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, basis, ebasis
             append!(tsupp, eq_cons[i].supp)
         end
     end
+    for item in obj.supp
+        push!(tsupp, item)
+    end
     _sort_unique!(tsupp)
     if (MomentOne == true || solution == true || !isempty(Iprime)) && TS != false
         ksupp = copy(tsupp)
         for i = 1:cql
-            append!(tsupp, get_basis(cliques[i], 2, nb=nb))
+            if basis_type == "chebyshev"
+                bas = [[UInt16[]]; [UInt16[k] for k in cliques[i]]]
+                for t = 1:length(bas), r = t:length(bas)
+                    ch_terms = cheby_product(bas[t], bas[r])
+                    for (bi, _) in ch_terms
+                        push!(tsupp, bi)
+                    end
+                end
+            else
+                append!(tsupp, get_basis(cliques[i], 2, nb=nb))
+            end
         end
         _sort_unique!(tsupp)
     else
@@ -439,11 +479,20 @@ function solvesdp(obj, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, basis, ebasis
                 bas = [[UInt16[]]; [UInt16[k] for k in cliques[i]]]
                 pos0 = @variable(model, [1:length(bas), 1:length(bas)], PSD)
                 for t = 1:length(bas), r = t:length(bas)
-                    Locb = bfind(tsupp, sadd(bas[t], bas[r], nb=nb))
-                    if t == r
-                        @inbounds add_to_expression!(cons[Locb], pos0[t,r])
+                    if basis_type == "chebyshev"
+                        ch_terms = cheby_product(bas[t], bas[r])
+                        factor = (t == r ? 1.0 : 2.0)
+                        for (bi, c_p) in ch_terms
+                            Locb = bfind(tsupp, bi)
+                            @inbounds add_to_expression!(cons[Locb], factor * c_p, pos0[t,r])
+                        end
                     else
-                        @inbounds add_to_expression!(cons[Locb], 2, pos0[t,r])
+                        Locb = bfind(tsupp, sadd(bas[t], bas[r], nb=nb))
+                        if t == r
+                            @inbounds add_to_expression!(cons[Locb], pos0[t,r])
+                        else
+                            @inbounds add_to_expression!(cons[Locb], 2, pos0[t,r])
+                        end
                     end
                 end
                 push!(psd_block_sizes, length(bas))
@@ -454,12 +503,21 @@ function solvesdp(obj, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, basis, ebasis
                 for l = 1:cl[i][j]
                     pos[i][j][l] = @variable(model, [1:blocksize[i][j][l], 1:blocksize[i][j][l]], PSD)
                     for t = 1:blocksize[i][j][l], r = t:blocksize[i][j][l], (s, item) in enumerate(ineq_cons[w].supp)
-                        @inbounds bi = sadd(basis[i][j][blocks[i][j][l][t]], item, basis[i][j][blocks[i][j][l][r]], nb=nb)
-                        Locb = bfind(tsupp, bi)
-                        if t == r
-                            @inbounds add_to_expression!(cons[Locb], ineq_cons[w].coe[s], pos[i][j][l][t,r])
+                        if basis_type == "chebyshev"
+                            ch_terms = cheby_product(basis[i][j][blocks[i][j][l][t]], basis[i][j][blocks[i][j][l][r]], item)
+                            factor = (t == r ? 1.0 : 2.0) * ineq_cons[w].coe[s]
+                            for (bi, c_p) in ch_terms
+                                Locb = bfind(tsupp, bi)
+                                @inbounds add_to_expression!(cons[Locb], factor * c_p, pos[i][j][l][t,r])
+                            end
                         else
-                            @inbounds add_to_expression!(cons[Locb], 2*ineq_cons[w].coe[s], pos[i][j][l][t,r])
+                            @inbounds bi = sadd(basis[i][j][blocks[i][j][l][t]], item, basis[i][j][blocks[i][j][l][r]], nb=nb)
+                            Locb = bfind(tsupp, bi)
+                            if t == r
+                                @inbounds add_to_expression!(cons[Locb], ineq_cons[w].coe[s], pos[i][j][l][t,r])
+                            else
+                                @inbounds add_to_expression!(cons[Locb], 2*ineq_cons[w].coe[s], pos[i][j][l][t,r])
+                            end
                         end
                     end
                     push!(psd_block_sizes, blocksize[i][j][l])
@@ -472,9 +530,17 @@ function solvesdp(obj, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, basis, ebasis
             for (j, w) in enumerate(J[i])
                 free[i][j] = @variable(model, [1:length(eblocks[i][j])])
                 for (u, k) in enumerate(eblocks[i][j]), (s, item) in enumerate(eq_cons[w].supp)
-                    @inbounds bi = sadd(ebasis[i][j][k], item, nb=nb)
-                    Locb = bfind(tsupp, bi)
-                    @inbounds add_to_expression!(cons[Locb], eq_cons[w].coe[s], free[i][j][u])
+                    if basis_type == "chebyshev"
+                        ch_terms = cheby_product(ebasis[i][j][k], item)
+                        for (bi, c_p) in ch_terms
+                            Locb = bfind(tsupp, bi)
+                            @inbounds add_to_expression!(cons[Locb], c_p * eq_cons[w].coe[s], free[i][j][u])
+                        end
+                    else
+                        @inbounds bi = sadd(ebasis[i][j][k], item, nb=nb)
+                        Locb = bfind(tsupp, bi)
+                        @inbounds add_to_expression!(cons[Locb], eq_cons[w].coe[s], free[i][j][u])
+                    end
                 end
             end
             num_free_scalars += sum(length.(eblocks[i]))
@@ -591,9 +657,9 @@ function solvesdp(obj, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, basis, ebasis
             end
             if dual_var !== nothing && !isempty(dual_var)
                 if solution == true && TS != false
-                    momone = get_moment(dual_var, tsupp, cliques, cql, cliquesize, nb=nb)
+                    momone = get_moment(dual_var, tsupp, cliques, cql, cliquesize, nb=nb, basis_type=basis_type)
                 end
-                moment = get_moment(dual_var, tsupp, cliques, cql, cliquesize, basis=basis, nb=nb)
+                moment = get_moment(dual_var, tsupp, cliques, cql, cliquesize, basis=basis, nb=nb, basis_type=basis_type)
             end
         end
     end
@@ -630,7 +696,7 @@ end
     return true
 end
 
-function get_blocks(ineq_cons::Vector{T1}, eq_cons::Vector{T2}, I, J, cliques, cql, tsupp, basis, ebasis; TS="block", eqTS=TS, nb=0, merge=false, md=3, signsymmetry=nothing) where {T1,T2<:poly}
+function get_blocks(ineq_cons::Vector{T1}, eq_cons::Vector{T2}, I, J, cliques, cql, tsupp, basis, ebasis; TS="block", eqTS=TS, nb=0, merge=false, md=3, signsymmetry=nothing, basis_type="monomial") where {T1,T2<:poly}
     blocks = Vector{Vector{Vector{Vector{Int}}}}(undef, cql)
     cl = Vector{Vector{Int}}(undef, cql)
     blocksize = Vector{Vector{Vector{Int}}}(undef, cql)
@@ -638,7 +704,7 @@ function get_blocks(ineq_cons::Vector{T1}, eq_cons::Vector{T2}, I, J, cliques, c
     @threads for i = 1:cql
         ksupp = (TS == false || TS == "signsymmetry") ? nothing : [item for item in tsupp if _is_sorted_subset(item, cliques[i])]
         blocks[i],cl[i],blocksize[i],eblocks[i] = get_blocks(ineq_cons[I[i]], eq_cons[J[i]], ksupp, basis[i],
-        ebasis[i], TS=TS, eqTS=eqTS, nb=nb, QUIET=true, merge=merge, md=md, signsymmetry=signsymmetry)
+        ebasis[i], TS=TS, eqTS=eqTS, nb=nb, QUIET=true, merge=merge, md=md, signsymmetry=signsymmetry, basis_type=basis_type)
     end
     return blocks,cl,blocksize,eblocks
 end
@@ -709,7 +775,7 @@ function assign_constraint(ineq_cons::Vector{T1}, eq_cons::Vector{T2}, cliques, 
     return I,J,Iprime,Jprime
 end
 
-function get_moment(dual_var, tsupp, cliques, cql, cliquesize; basis=[], nb=0)
+function get_moment(dual_var, tsupp, cliques, cql, cliquesize; basis=[], nb=0, basis_type="monomial")
     moment = Vector{Symmetric{Float64}}(undef, cql)
     for i = 1:cql
         lb = isempty(basis) ? cliquesize[i] + 1 : length(basis[i][1])
@@ -718,18 +784,44 @@ function get_moment(dual_var, tsupp, cliques, cql, cliquesize; basis=[], nb=0)
             for j = 1:lb, k = j:lb
                 if j == 1
                     bi = k == 1 ? UInt16[] : UInt16[cliques[i][k-1]]
+                    Locb = bfind(tsupp, bi)
+                    mmat[j,k] = Locb !== nothing ? dual_var[Locb] : 0.0
                 else
-                    bi = sadd(UInt16[cliques[i][j-1]], UInt16[cliques[i][k-1]], nb=nb)
+                    if basis_type == "chebyshev"
+                        ch_terms = cheby_product(UInt16[cliques[i][j-1]], UInt16[cliques[i][k-1]])
+                        val = 0.0
+                        for (bi, c_p) in ch_terms
+                            Locb = bfind(tsupp, bi)
+                            if Locb !== nothing
+                                val += c_p * dual_var[Locb]
+                            end
+                        end
+                        mmat[j,k] = val
+                    else
+                        bi = sadd(UInt16[cliques[i][j-1]], UInt16[cliques[i][k-1]], nb=nb)
+                        Locb = bfind(tsupp, bi)
+                        mmat[j,k] = Locb !== nothing ? dual_var[Locb] : 0.0
+                    end
                 end
-                Locb = bfind(tsupp, bi)
-                mmat[j,k] = dual_var[Locb]
             end
         else
             for j = 1:lb, k = j:lb
-                bi = sadd(basis[i][1][j], basis[i][1][k], nb=nb)
-                Locb = bfind(tsupp, bi)
-                if Locb !== nothing
-                    mmat[j,k] = dual_var[Locb]
+                if basis_type == "chebyshev"
+                    ch_terms = cheby_product(basis[i][1][j], basis[i][1][k])
+                    val = 0.0
+                    for (bi, c_p) in ch_terms
+                        Locb = bfind(tsupp, bi)
+                        if Locb !== nothing
+                            val += c_p * dual_var[Locb]
+                        end
+                    end
+                    mmat[j,k] = val
+                else
+                    bi = sadd(basis[i][1][j], basis[i][1][k], nb=nb)
+                    Locb = bfind(tsupp, bi)
+                    if Locb !== nothing
+                        mmat[j,k] = dual_var[Locb]
+                    end
                 end
             end
         end
