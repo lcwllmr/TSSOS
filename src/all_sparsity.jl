@@ -368,6 +368,22 @@ function cs_tssos(data::spop_data; TS="block", eqTS=TS, merge=false, md=3, QUIET
     return opt,sol,data
 end
 
+function project_psd_cone(M::AbstractMatrix{Float64}; tol=1e-12)
+    isempty(M) && return M
+    M_sym = Symmetric((M + M') ./ 2.0)
+    F = eigen(M_sym)
+    if all(λ -> λ >= -tol, F.values)
+        if any(λ -> λ < 0.0, F.values)
+            clamped = max.(F.values, 0.0)
+            return F.vectors * Diagonal(clamped) * F.vectors'
+        else
+            return Matrix(M_sym)
+        end
+    end
+    clamped = max.(F.values, 0.0)
+    return F.vectors * Diagonal(clamped) * F.vectors'
+end
+
 function solvesdp(obj, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, basis, ebasis, cliques, cql, cliquesize, I, J, Iprime, Jprime,
     blocks, eblocks, cl, blocksize; nb=0, QUIET=false, TS="block", solve=true, solution=false, Gram=false, MomentOne=false, mosek_setting=mosek_para(),
     model=nothing, dualize=false, writetofile=false, t_tssos_start=nothing, timings=nothing, basis_type="monomial") where {T1,T2<:poly}
@@ -467,6 +483,9 @@ function solvesdp(obj, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, basis, ebasis
         time = @elapsed begin
         cons = [AffExpr(0) for i=1:length(tsupp)]
         pos = Vector{Vector{Vector{Symmetric{VariableRef}}}}(undef, cql)
+        pos0_vec = Vector{Any}(fill(nothing, cql))
+        Iprime_vars = VariableRef[]
+        Jprime_vars = VariableRef[]
         # SDP structure accounting
         psd_block_sizes = Int[]
         num_nonneg_scalars = 0
@@ -478,6 +497,7 @@ function solvesdp(obj, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, basis, ebasis
             if (MomentOne == true || solution == true || !isempty(Iprime)) && TS != false
                 bas = [[UInt16[]]; [UInt16[k] for k in cliques[i]]]
                 pos0 = @variable(model, [1:length(bas), 1:length(bas)], PSD)
+                pos0_vec[i] = pos0
                 for t = 1:length(bas), r = t:length(bas)
                     if basis_type == "chebyshev"
                         ch_terms = cheby_product(bas[t], bas[r])
@@ -547,6 +567,7 @@ function solvesdp(obj, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, basis, ebasis
         end
         for i in Iprime
             pos0 = @variable(model, lower_bound=0)
+            push!(Iprime_vars, pos0)
             for (j, item) in enumerate(ineq_cons[i].supp)
                 Locb = bfind(tsupp, item)
                 @inbounds add_to_expression!(cons[Locb], ineq_cons[i].coe[j], pos0)
@@ -555,6 +576,7 @@ function solvesdp(obj, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, basis, ebasis
         end
         for i in Jprime
             pos0 = @variable(model)
+            push!(Jprime_vars, pos0)
             for (j, item) in enumerate(eq_cons[i].supp)
                 Locb = bfind(tsupp, item)
                 @inbounds add_to_expression!(cons[Locb], eq_cons[i].coe[j], pos0)
@@ -648,6 +670,74 @@ function solvesdp(obj, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, basis, ebasis
                 catch err
                     @warn "Could not retrieve Gram matrix / multipliers (termination_status=$SDP_status): $err"
                 end
+            end
+            cert_bound = nothing
+            cert_eps = nothing
+            if objv !== nothing
+                try
+                    val_dict = Dict{VariableRef, Float64}()
+                    for i in 1:cql
+                        if pos0_vec[i] !== nothing
+                            X_raw = value.(pos0_vec[i])
+                            X_psd = project_psd_cone(Matrix(X_raw))
+                            for r in 1:size(X_raw, 1), c in 1:size(X_raw, 2)
+                                val_dict[pos0_vec[i][r, c]] = X_psd[r, c]
+                            end
+                        end
+                        for j in 1:length(I[i]), l in 1:cl[i][j]
+                            mat_vars = pos[i][j][l]
+                            X_raw = value.(mat_vars)
+                            X_psd = project_psd_cone(Matrix(X_raw))
+                            for r in 1:size(X_raw, 1), c in 1:size(X_raw, 2)
+                                val_dict[mat_vars[r, c]] = X_psd[r, c]
+                            end
+                        end
+                    end
+                    for i in 1:cql, j in 1:length(J[i])
+                        for u in 1:length(eblocks[i][j])
+                            v = free[i][j][u]
+                            val_dict[v] = value(v)
+                        end
+                    end
+                    for v in Iprime_vars
+                        val_dict[v] = max(0.0, value(v))
+                    end
+                    for v in Jprime_vars
+                        val_dict[v] = value(v)
+                    end
+                    val_dict[lower] = Float64(objv)
+
+                    err = zeros(Float64, length(cons))
+                    for (idx, expr) in enumerate(cons)
+                        acc = expr.constant
+                        for (v, coeff) in expr.terms
+                            acc += coeff * get(val_dict, v, 0.0)
+                        end
+                        err[idx] = acc
+                    end
+
+                    eps_val = if basis_type == "chebyshev"
+                        -sum(abs.(err))
+                    else
+                        sum(e <= 0.0 ? e : 0.0 for e in (-1.0 .* err))
+                    end
+                    eps_val = min(0.0, eps_val)
+                    if isfinite(eps_val)
+                        cert_bound = Float64(objv) + eps_val
+                        cert_eps = eps_val
+                        if QUIET == false
+                            @printf("Certified lower bound: %.8e (raw: %.8e, eps: %.4e, max linear err: %.4e)\n", cert_bound, Float64(objv), cert_eps, isempty(err) ? 0.0 : maximum(abs.(err)))
+                        end
+                    else
+                        @warn "Bound certification computed non-finite epsilon: $eps_val"
+                    end
+                catch err_cert
+                    @warn "Could not compute certified SOS bound: $err_cert"
+                end
+            end
+            if timings !== nothing
+                timings[:certified_lower_bound] = cert_bound
+                timings[:bound_certification_epsilon] = cert_eps
             end
             dual_var = nothing
             try
