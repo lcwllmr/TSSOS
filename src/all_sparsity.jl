@@ -107,7 +107,7 @@ If `MomentOne=true`, add an extra first-order moment PSD constraint to the momen
 """
 function cs_tssos(pop::Vector{Poly{T}}, x, d; nb=0, numeq=0, CS="MF", cliques=[], basis=[], ebasis=[], TS="block", eqTS=TS, merge=false, md=3,
     dualize=false, QUIET=false, solve=true, solution=false, solution_mode="local", local_solver=nothing, Gram=false, MomentOne=false, mosek_setting=mosek_para(), model=nothing,
-    writetofile=false, rtol=1e-2, gtol=1e-2, ftol=1e-3, timings=nothing, scalar_ineqs=Int[], basis_type="monomial") where {T<:Number}
+    writetofile=false, rtol=1e-2, gtol=1e-2, ftol=1e-3, timings=nothing, scalar_ineqs=Int[], basis_type="monomial", correct="auto") where {T<:Number}
     if nb > 0
         pop = Groebner.normalform(x[1:nb].^2 .- 1, pop)
     end
@@ -116,7 +116,7 @@ function cs_tssos(pop::Vector{Poly{T}}, x, d; nb=0, numeq=0, CS="MF", cliques=[]
     eqTS=eqTS, merge=merge, md=md, QUIET=QUIET, dualize=dualize, solve=solve,
     solution=solution, solution_mode=solution_mode, local_solver=local_solver,
     Gram=Gram, MomentOne=MomentOne,
-    mosek_setting=mosek_setting, model=model, writetofile=writetofile, rtol=rtol, gtol=gtol, ftol=ftol, pop=pop, x=x, timings=timings, scalar_ineqs=scalar_ineqs, basis_type=basis_type)
+    mosek_setting=mosek_setting, model=model, writetofile=writetofile, rtol=rtol, gtol=gtol, ftol=ftol, pop=pop, x=x, timings=timings, scalar_ineqs=scalar_ineqs, basis_type=basis_type, correct=correct)
     return opt,sol,data
 end
 
@@ -130,7 +130,7 @@ Compute the first TS step of the CS-TSSOS hierarchy for constrained polynomial o
 function cs_tssos(npop::Vector{poly{T}}, n, d; numeq=0, nb=0, CS="MF", cliques=[], basis=[], ebasis=[], TS="block",
     eqTS=TS, merge=false, md=3, QUIET=false, dualize=false, solve=true, solution=false, solution_mode="local", local_solver=nothing,
     Gram=false, MomentOne=false,
-    mosek_setting=mosek_para(), model=nothing, writetofile=false, rtol=1e-2, gtol=1e-2, ftol=1e-3, pop=nothing, x=nothing, timings=nothing, scalar_ineqs=Int[], basis_type="monomial") where {T<:Number}
+    mosek_setting=mosek_para(), model=nothing, writetofile=false, rtol=1e-2, gtol=1e-2, ftol=1e-3, pop=nothing, x=nothing, timings=nothing, scalar_ineqs=Int[], basis_type="monomial", correct="auto") where {T<:Number}
     t_tssos_start = Base.time()
     if timings === nothing
         timings = Dict{Symbol, Any}()
@@ -237,7 +237,7 @@ function cs_tssos(npop::Vector{poly{T}}, n, d; numeq=0, nb=0, CS="MF", cliques=[
     end
     opt,ksupp,momone,moment,GramMat,multiplier,SDP_status = solvesdp(obj, ineq_cons, eq_cons, basis, ebasis, cliques, cql, cliquesize, I, J, Iprime, Jprime, blocks,
     eblocks, cl, blocksize, nb=nb, QUIET=QUIET, TS=TS, dualize=dualize, solve=solve, solution=solution, MomentOne=MomentOne, Gram=Gram, mosek_setting=mosek_setting,
-    model=model, writetofile=writetofile, t_tssos_start=t_tssos_start, timings=timings, basis_type=basis_type)
+    model=model, writetofile=writetofile, t_tssos_start=t_tssos_start, timings=timings, basis_type=basis_type, correct=correct)
     data = spop_data(pop, obj, ineq_cons, eq_cons, x, n, nb, numeq, basis, ebasis, ksupp, cliquesize, cliques, I, J, Iprime, Jprime, blocksize, blocks, eblocks, GramMat,
     multiplier, moment, SDP_status, rtol, gtol, ftol, 1, timings)
     sol = nothing
@@ -313,7 +313,7 @@ end
 Compute higher TS steps of the CS-TSSOS hierarchy.
 """
 function cs_tssos(data::spop_data; TS="block", eqTS=TS, merge=false, md=3, QUIET=false, solve=true, solution=false, Gram=false, dualize=false,
-    MomentOne=false, mosek_setting=mosek_para(), model=nothing, writetofile=false)
+    MomentOne=false, mosek_setting=mosek_para(), model=nothing, writetofile=false, correct="auto")
     obj = data.obj
     ineq_cons = data.ineq_cons
     eq_cons = data.eq_cons
@@ -341,7 +341,7 @@ function cs_tssos(data::spop_data; TS="block", eqTS=TS, merge=false, md=3, QUIET
         end
         opt,ksupp,momone,moment,GramMat,multiplier,SDP_status = solvesdp(obj, ineq_cons, eq_cons, basis, ebasis, cliques, cql, cliquesize, data.I, data.J,
         data.Iprime, data.Jprime, blocks, eblocks, cl, blocksize, nb=nb, QUIET=QUIET, solve=solve, solution=solution, dualize=dualize, MomentOne=MomentOne,
-        Gram=Gram, mosek_setting=mosek_setting, model=model, writetofile=writetofile)
+        Gram=Gram, mosek_setting=mosek_setting, model=model, writetofile=writetofile, correct=correct)
         sol = nothing
         if solution == true && momone !== nothing
             sol,gap,data.flag = approx_sol(momone, opt, n, cliques, cql, cliquesize, [obj; ineq_cons[2:end]; eq_cons], numeq=numeq, gtol=data.gtol, ftol=data.ftol, QUIET=true)
@@ -386,7 +386,7 @@ end
 
 function solvesdp(obj, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, basis, ebasis, cliques, cql, cliquesize, I, J, Iprime, Jprime,
     blocks, eblocks, cl, blocksize; nb=0, QUIET=false, TS="block", solve=true, solution=false, Gram=false, MomentOne=false, mosek_setting=mosek_para(),
-    model=nothing, dualize=false, writetofile=false, t_tssos_start=nothing, timings=nothing, basis_type="monomial") where {T1,T2<:poly}
+    model=nothing, dualize=false, writetofile=false, t_tssos_start=nothing, timings=nothing, basis_type="monomial", correct="auto") where {T1,T2<:poly}
     tsupp = Vector{UInt16}[]
     compact_threshold = 500_000
     for i = 1:cql
@@ -673,69 +673,93 @@ function solvesdp(obj, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, basis, ebasis
             end
             cert_bound = nothing
             cert_eps = nothing
+            correction_applied = false
             if objv !== nothing
-                try
-                    val_dict = Dict{VariableRef, Float64}()
-                    for i in 1:cql
-                        if pos0_vec[i] !== nothing
-                            X_raw = value.(pos0_vec[i])
-                            X_psd = project_psd_cone(Matrix(X_raw))
-                            for r in 1:size(X_raw, 1), c in 1:size(X_raw, 2)
-                                val_dict[pos0_vec[i][r, c]] = X_psd[r, c]
+                is_slow_progress = occursin("SLOW_PROGRESS", string(SDP_status))
+                should_correct = if correct == "on"
+                    true
+                elseif correct == "off"
+                    false
+                elseif correct == "auto"
+                    is_slow_progress || (SDP_status != MOI.OPTIMAL && objv !== nothing)
+                else
+                    @warn "Unknown correct mode '$correct', defaulting to auto"
+                    is_slow_progress
+                end
+
+                if should_correct
+                    try
+                        val_dict = Dict{VariableRef, Float64}()
+                        for i in 1:cql
+                            if pos0_vec[i] !== nothing
+                                X_raw = value.(pos0_vec[i])
+                                X_psd = project_psd_cone(Matrix(X_raw))
+                                for r in 1:size(X_raw, 1), c in 1:size(X_raw, 2)
+                                    val_dict[pos0_vec[i][r, c]] = X_psd[r, c]
+                                end
+                            end
+                            for j in 1:length(I[i]), l in 1:cl[i][j]
+                                mat_vars = pos[i][j][l]
+                                X_raw = value.(mat_vars)
+                                X_psd = project_psd_cone(Matrix(X_raw))
+                                for r in 1:size(X_raw, 1), c in 1:size(X_raw, 2)
+                                    val_dict[mat_vars[r, c]] = X_psd[r, c]
+                                end
                             end
                         end
-                        for j in 1:length(I[i]), l in 1:cl[i][j]
-                            mat_vars = pos[i][j][l]
-                            X_raw = value.(mat_vars)
-                            X_psd = project_psd_cone(Matrix(X_raw))
-                            for r in 1:size(X_raw, 1), c in 1:size(X_raw, 2)
-                                val_dict[mat_vars[r, c]] = X_psd[r, c]
+                        for i in 1:cql, j in 1:length(J[i])
+                            for u in 1:length(eblocks[i][j])
+                                v = free[i][j][u]
+                                val_dict[v] = value(v)
                             end
                         end
-                    end
-                    for i in 1:cql, j in 1:length(J[i])
-                        for u in 1:length(eblocks[i][j])
-                            v = free[i][j][u]
+                        for v in Iprime_vars
+                            val_dict[v] = max(0.0, value(v))
+                        end
+                        for v in Jprime_vars
                             val_dict[v] = value(v)
                         end
-                    end
-                    for v in Iprime_vars
-                        val_dict[v] = max(0.0, value(v))
-                    end
-                    for v in Jprime_vars
-                        val_dict[v] = value(v)
-                    end
-                    val_dict[lower] = Float64(objv)
+                        val_dict[lower] = Float64(objv)
 
-                    err = zeros(Float64, length(cons))
-                    for (idx, expr) in enumerate(cons)
-                        acc = expr.constant
-                        for (v, coeff) in expr.terms
-                            acc += coeff * get(val_dict, v, 0.0)
+                        err = zeros(Float64, length(cons))
+                        for (idx, expr) in enumerate(cons)
+                            acc = expr.constant
+                            for (v, coeff) in expr.terms
+                                acc += coeff * get(val_dict, v, 0.0)
+                            end
+                            err[idx] = acc
                         end
-                        err[idx] = acc
-                    end
 
-                    eps_val = if basis_type == "chebyshev"
-                        -sum(abs.(err))
-                    else
-                        sum(e <= 0.0 ? e : 0.0 for e in (-1.0 .* err))
-                    end
-                    eps_val = min(0.0, eps_val)
-                    if isfinite(eps_val)
-                        cert_bound = Float64(objv) + eps_val
-                        cert_eps = eps_val
-                        if QUIET == false
-                            @printf("Certified lower bound: %.8e (raw: %.8e, eps: %.4e, max linear err: %.4e)\n", cert_bound, Float64(objv), cert_eps, isempty(err) ? 0.0 : maximum(abs.(err)))
+                        eps_val = if basis_type == "chebyshev"
+                            -sum(abs.(err))
+                        else
+                            sum(e <= 0.0 ? e : 0.0 for e in (-1.0 .* err))
                         end
-                    else
-                        @warn "Bound certification computed non-finite epsilon: $eps_val"
+                        eps_val = min(0.0, eps_val)
+                        if isfinite(eps_val)
+                            cert_bound = Float64(objv) + eps_val
+                            cert_eps = eps_val
+                            correction_applied = true
+                            @printf("[CORRECT] Feasibility correction: applied (mode=%s, status=%s, eps=%.4e, max linear err: %.4e)\n", correct, SDP_status, cert_eps, isempty(err) ? 0.0 : maximum(abs.(err)))
+                            if QUIET == false
+                                @printf("Certified lower bound: %.8e (raw: %.8e, eps: %.4e, max linear err: %.4e)\n", cert_bound, Float64(objv), cert_eps, isempty(err) ? 0.0 : maximum(abs.(err)))
+                            end
+                        else
+                            @warn "Bound certification computed non-finite epsilon: $eps_val"
+                        end
+                    catch err_cert
+                        @warn "Could not compute certified SOS bound: $err_cert"
                     end
-                catch err_cert
-                    @warn "Could not compute certified SOS bound: $err_cert"
+                else
+                    cert_bound = Float64(objv)
+                    cert_eps = 0.0
+                    correction_applied = false
+                    @printf("[CORRECT] Feasibility correction: skipped (mode=%s, status=%s)\n", correct, SDP_status)
                 end
             end
             if timings !== nothing
+                timings[:feasibility_correction_mode] = correct
+                timings[:feasibility_correction_applied] = correction_applied
                 timings[:certified_lower_bound] = cert_bound
                 timings[:bound_certification_epsilon] = cert_eps
             end
