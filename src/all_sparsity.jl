@@ -1,6 +1,6 @@
 function _get_inner_sdp_time()
     for (pkg, mod) in Base.loaded_modules
-        if pkg.name == "SDPSanitizer" && isdefined(mod, :get_last_inner_solve_time)
+        if pkg.name in ("PowerFlowFeasibility", "SDPSanitizer", "Main") && isdefined(mod, :get_last_inner_solve_time)
             t = mod.get_last_inner_solve_time()
             if t > 0.0
                 return t
@@ -12,7 +12,7 @@ end
 
 function _reset_inner_sdp_time()
     for (pkg, mod) in Base.loaded_modules
-        if pkg.name == "SDPSanitizer" && isdefined(mod, :reset_solve_times!)
+        if pkg.name in ("PowerFlowFeasibility", "SDPSanitizer", "Main") && isdefined(mod, :reset_solve_times!)
             mod.reset_solve_times!()
         end
     end
