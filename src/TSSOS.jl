@@ -25,7 +25,6 @@ import CliqueTrees
 
 export tssos, cs_tssos, complex_tssos, complex_cs_tssos, LinearPMI, sparseobj
 export arrange, bfind, mosek_para
-export cheby_product, monomial_to_chebyshev, poly_to_chebyshev
 export local_solution, refine_sol, extract_solutions, extract_solutions_robust, extract_solutions_pmo, extract_solutions_pmo_robust, extract_weight_matrix
 export add_SOS!, add_SOSMatrix!, add_poly!, add_psatz!, add_complex_psatz!, add_psatz_cheby!, add_poly_cheby!
 export OnMonomials, tssos_symmetry, complex_tssos_symmetry, get_signsymmetry, add_psatz_symmetry!
@@ -45,7 +44,6 @@ mosek_para() = mosek_para(1e-8, 1e-8, 1e-8, -1, 0)
 
 include("polynomial.jl")
 include("utils.jl")
-include("chebyshev_linearization.jl")
 include("chordal_extension.jl")
 include("clique_merge.jl")
 include("term_sparsity.jl")
