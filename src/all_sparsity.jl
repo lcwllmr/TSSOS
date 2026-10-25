@@ -436,6 +436,7 @@ function solvesdp(obj, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, basis, ebasis
             println("Collecting SDP structure statistics...")
         end
         for i = 1:cql
+            has_pos0 = false
             if (MomentOne == true || solution == true || !isempty(Iprime)) && TS != false
                 bas = [[UInt16[]]; [UInt16[k] for k in cliques[i]]]
                 pos0 = @variable(model, [1:length(bas), 1:length(bas)], PSD)
@@ -448,9 +449,19 @@ function solvesdp(obj, ineq_cons::Vector{T1}, eq_cons::Vector{T2}, basis, ebasis
                     end
                 end
                 push!(psd_block_sizes, length(bas))
+                has_pos0 = true
             end
             pos[i] = Vector{Vector{Symmetric{VariableRef}}}(undef, length(I[i]))
             for (j, w) in enumerate(I[i])
+                if j == 1 && w == 1 && has_pos0 && length(basis[i][1]) == cliquesize[i] + 1
+                    # At order 1, basis[i][1] is identical to bas = [1; cliques[i]].
+                    # Reuse pos0 directly as pos[i][1][1] instead of creating collinear duplicate PSD sub-blocks.
+                    cl[i][1] = 1
+                    blocksize[i][1] = [length(basis[i][1])]
+                    blocks[i][1] = [collect(1:length(basis[i][1]))]
+                    pos[i][1] = [pos0]
+                    continue
+                end
                 pos[i][j] = Vector{Symmetric{VariableRef}}(undef, cl[i][j])
                 for l = 1:cl[i][j]
                     pos[i][j][l] = @variable(model, [1:blocksize[i][j][l], 1:blocksize[i][j][l]], PSD)
